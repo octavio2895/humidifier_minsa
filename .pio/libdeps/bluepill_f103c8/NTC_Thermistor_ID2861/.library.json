@@ -1,0 +1,54 @@
+{
+    "description": "The Library implements a set of methods for working with a NTC thermistor.", 
+    "repository": {
+        "url": "https://github.com/YuriiSalimov/NTC_Thermistor", 
+        "type": "git"
+    }, 
+    "platforms": [
+        "atmelavr", 
+        "atmelmegaavr", 
+        "atmelsam", 
+        "espressif32", 
+        "espressif8266", 
+        "gd32v", 
+        "infineonxmc", 
+        "intel_arc32", 
+        "kendryte210", 
+        "microchippic32", 
+        "nordicnrf51", 
+        "nordicnrf52", 
+        "ststm32", 
+        "ststm8", 
+        "teensy", 
+        "timsp430"
+    ], 
+    "export": {
+        "exclude": [
+            "extras", 
+            "docs", 
+            "tests", 
+            "test", 
+            "*.doxyfile", 
+            "*.pdf"
+        ], 
+        "include": null
+    }, 
+    "authors": [
+        {
+            "maintainer": true, 
+            "name": "Yurii Salimov", 
+            "url": null, 
+            "email": "yuriy.alex.salimov@gmail.com"
+        }
+    ], 
+    "keywords": [
+        "sensors"
+    ], 
+    "id": 2861, 
+    "name": "NTC_Thermistor", 
+    "frameworks": [
+        "arduino"
+    ], 
+    "version": "2.0.3", 
+    "homepage": null
+}
