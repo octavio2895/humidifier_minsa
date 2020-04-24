@@ -631,7 +631,7 @@ void encoderButtonISR()
 
 void screen_debug_manager(StateVals *vals, uint32_t millis)
 {
-  static char buffer[200];
+  static char buffer[22];
   static const char mode1[4] = {'A','B','C','D'};
   static uint16_t y;// view_port_init;
   float plate_temp = 0; // Current plat temperature. °C
