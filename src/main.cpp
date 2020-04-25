@@ -1,3 +1,4 @@
+ 
 /*    humidifier_minsa
  
  An un-reviewed and experimental firmware for a medical humidifier
@@ -6,7 +7,7 @@
  and swiftly disposed after the pandemic ends. 
  DO NOT USE THIS FIRWMARE ON CRITICAL MEDICAL DEVICES.
 
- Copyright (C) 2020 Octavio Echeverria
+ Copyright (C) 2020 Octavio Echeverria, Jahir Argote, Nicolas Tertusio
 
   
  GNU GPLv3 license
@@ -51,8 +52,8 @@
 // Pin definitions
 #define DHTTYPE                 DHT22
 #define DHTPIN                  PA4
-#define WIND_SPEED_PIN          PA2
-#define WIND_THERM_PIN          PA3
+#define WIND_SPEED_PIN          PA3
+#define WIND_THERM_PIN          PA2
 #define PIN_THERMISTOR          PA1
 #define PLATE_RELAY_PIN         PA8
 #define FAN_PIN                 PA10
@@ -165,8 +166,8 @@ void encoderButtonISR();
 void encoderISR();
 byte i2c_scanner();
 float arr_average(float *arr, uint16_t size);
-void lcd_buffer_write_debug(char buffer [200],uint16_t buffer_size,uint16_t view_port_init);
-{
+//void lcd_buffer_write_debug(char buffer [200],uint16_t buffer_size,uint16_t view_port_init);
+
 
 
 void setup() 
@@ -175,9 +176,12 @@ void setup()
   Serial.println("Booting up!");
   pinMode(PLATE_RELAY_PIN, OUTPUT);
   pinMode(FAN_PIN, OUTPUT);
+  analogWrite(FAN_PIN, 0);
   pinMode(HOSE_PIN, OUTPUT);
   pinMode(DHTPIN, INPUT);
-  pinMode(PIN_THERMISTOR, INPUT_ANALOG); 
+  pinMode(PIN_THERMISTOR, INPUT_ANALOG);
+  pinMode(WIND_THERM_PIN, INPUT_ANALOG); 
+  pinMode(WIND_SPEED_PIN, INPUT_ANALOG); 
   lcd.begin(LCD_COLUMNS, LCD_ROWS, LCD_5x8DOTS);
   lcd_buffer_write("Humidifier v0.01FABLAB-MINSA-UTP", 32);
   encoder.begin();
@@ -185,11 +189,11 @@ void setup()
   attachInterrupt(digitalPinToInterrupt(PIN_A), encoderISR, CHANGE);
   attachInterrupt(digitalPinToInterrupt(PIN_B), encoderISR, CHANGE); 
   delay(2000);
-  button1.Update();
+ /* button1.Update();
   if(button1.clicks =! 0)
   {
     debug = 1;
-  }
+  }*/
 }
 
 void loop() 
@@ -370,13 +374,13 @@ void execute(StateVals *vals)
       digitalWrite(PLATE_RELAY_PIN, LOW);
     }
 
-    analogWrite(FAN_PIN, 256 - vals->fan_pwm);
-    analogWrite(HOSE_PIN, 256 - vals->hose_pwm);
+    analogWrite(FAN_PIN, 256);
+    analogWrite(HOSE_PIN, vals->hose_pwm);
   }
   else
   {
-    analogWrite(FAN_PIN, 256);
-    analogWrite(HOSE_PIN, 256);
+    analogWrite(FAN_PIN, 60);
+    analogWrite(HOSE_PIN, 0);
     digitalWrite(PLATE_RELAY_PIN, false);
   }
   
@@ -436,12 +440,15 @@ void read_flow(StateVals *vals)
   #endif
   float TMP_Therm_ADunits = analogRead(WIND_THERM_PIN);
   float RV_Wind_ADunits = analogRead(WIND_SPEED_PIN);
-  float RV_Wind_Volts = (RV_Wind_ADunits *  0.0048828125);
+  // float RV_Wind_Volts = (RV_Wind_ADunits *  0.0048828125);
+  float RV_Wind_Volts = (RV_Wind_ADunits *  0.0032226563);
   float zeroWind_ADunits = -0.0006 * ((float)TMP_Therm_ADunits * (float)TMP_Therm_ADunits) + 1.0727 * (float)TMP_Therm_ADunits + 47.172;
-  float zeroWind_volts = (zeroWind_ADunits * 0.0048828125) - zeroWindAdjustment;
+  // float zeroWind_volts = (zeroWind_ADunits * 0.0048828125) - zeroWindAdjustment;
+  float zeroWind_volts = (zeroWind_ADunits * 0.0032226563) - zeroWindAdjustment;
   float WindSpeed_mps =  pow(((RV_Wind_Volts - zeroWind_volts) / .2300) , 2.7265) / 21.97;
   vals->current_airspeed = WindSpeed_mps;
-  vals->current_airflow = WindSpeed_mps * ((3.1415/4) * DIAMETER*DIAMETER) * 60000;
+  vals->current_airflow = WindSpeed_mps * ((3.1415/4) * pow(DIAMETER ,2)) * 60000;
+  // vals->current_airflow = RV_Wind_ADunits;
 }
 
 void read_encoder(StateVals *vals)
@@ -603,8 +610,8 @@ void screen_manager(StateVals *vals, uint32_t millis)
   {
 
     //Print ACTUAL Values
-    if(vals->plate_relay_state) sprintf(buffer, "T:%dC  RH:%3d%%  V:%2dL/min   ON  ", (int)vals->plate_temp, (int)vals->vapor_humidity, (int)vals->current_airflow);
-    else sprintf(buffer, "T:%dC  RH:%3d%%  V:%2dL/min   OFF ", (int)vals->plate_temp, (int)vals->vapor_humidity, (int)vals->current_airflow);
+    if(vals->pwr_state) sprintf(buffer, "T:%dC  RH:%3d%%  V:%2dL/min   ON  ", (int)vals->vapor_temp, (int)vals->vapor_humidity, (int)vals->current_airspeed);
+    else sprintf(buffer, "T:%dC  RH:%3d%%  V:%2dL/min   OFF ", (int)vals->vapor_temp, (int)vals->vapor_humidity, (int)vals->current_airspeed);
   }
   if(millis>next_jahir_screen_update)
   {
@@ -629,7 +636,7 @@ void encoderButtonISR()
   encoder.readPushButton(); 
 }
 
-void screen_debug_manager(StateVals *vals, uint32_t millis)
+/*void screen_debug_manager(StateVals *vals, uint32_t millis)
 {
   static char buffer[22];
   static const char mode1[4] = {'A','B','C','D'};
@@ -677,7 +684,7 @@ void screen_debug_manager(StateVals *vals, uint32_t millis)
   }
   return;
   
-}
+}*/
 
 void lcd_buffer_write(char buffer[32], uint16_t sizeof_buffer)
 {
@@ -701,7 +708,7 @@ void lcd_buffer_write(char buffer[32], uint16_t sizeof_buffer)
   return;
 }
 
-void lcd_buffer_write_debug(char buffer[200], uint16_t sizeof_buffer,uint16_t view_port_init)
+/*void lcd_buffer_write_debug(char buffer[200], uint16_t sizeof_buffer,uint16_t view_port_init)
 {
   #ifdef DEBUG
   Serial.print("LCD: ");
@@ -721,7 +728,7 @@ void lcd_buffer_write_debug(char buffer[200], uint16_t sizeof_buffer,uint16_t vi
     }
   }
   return;
-}
+}*/
 
 void beep_manager(StateVals *vals)
 {
