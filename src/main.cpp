@@ -424,7 +424,7 @@ void read_thermistor(StateVals *vals)
       init = true;
     }
   uint16_t adc_read = analogRead(PIN_THERMISTOR);
-  float resistance = 100000*((1024/(float)adc_read)-1);
+  float resistance = 100000*(((float)adc_read)/(1024-(float)adc_read));
   // temp_array[temp_num] = (B_VALUE*(25+273.15) / ((25+273.15)*log(resistance/100000)+B_VALUE)) - 273.15;
   temp_array[temp_num] = (B_VALUE) / (log(resistance)+1.73544) - 273.15;
   temp_num++;
