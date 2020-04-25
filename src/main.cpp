@@ -138,6 +138,7 @@ struct StateVals
   Beeps current_beep;
   uint16_t adc_therm = 0;
   float them_resistance = 0;
+  float duty_cycle = 0;
 }state_vals;
 
 // Objects
@@ -152,7 +153,7 @@ ClickButton button1(BUTTON, LOW, CLICKBTN_PULLUP);
 void read_flow(StateVals *vals);
 void read_thermistor(StateVals *vals);
 void estimate_flow(StateVals *vals);
-void control_bangbang(StateVals *vals);
+void control_bangbang(StateVals *vals,uint32_t millis);
 void update_pid(StateVals *vals);
 void execute(StateVals *vals);
 void read_dht(StateVals *vals);
@@ -225,7 +226,7 @@ void loop()
   }
   if (millis() > next_bangbang_control) 
   {
-    control_bangbang(&state_vals);
+    control_bangbang(&state_vals, millis());
     next_bangbang_control = millis() + BANGBANG_CONTROL_DELAY;
   }
   if (millis() > next_pid_update) 
@@ -304,16 +305,62 @@ void estimate_flow(StateVals *vals)
   #endif
 }
 
-void control_bangbang(StateVals *vals)
+void control_bangbang(StateVals *vals, uint32_t millis)
 {
-  #ifdef DEBUG
-  Serial.println("BANGBANG...");
-  #endif
-  // if (vals->plate_temp < (vals->target_plate_temp-PLATE_HISTERESIS))vals->plate_relay_cmd = true; // Under lower range, activate.
-  // else if (vals->plate_temp > (vals->plate_temp+PLATE_HISTERESIS))vals->plate_relay_cmd = false; // Over upper range, deactivate.
-  if (vals->plate_temp < (50-PLATE_HISTERESIS))vals->plate_relay_cmd = true; // Under lower range, activate.
-  else if (vals->plate_temp > (50+PLATE_HISTERESIS))vals->plate_relay_cmd = false; // Over upper range, deactivate.
+  volatile float error_plate_temp_current;
+  volatile float error_plate_temp_old;
+  volatile float delta_error_plate_temp_current;
+  volatile float delta_error_plate_temp_old;
+  const uint16_t target_plate_temp = 110;
+  volatile uint16_t kp_bb=420, kd_bb=420;
+  const uint16_t periodo = 2000;
+  volatile uint32_t current_step = millis%periodo;
 
+  
+  //Enter logic if the temperature is going up
+  if (vals->plate_temp < (target_plate_temp-PLATE_HISTERESIS))
+  {
+    //Read error values
+    error_plate_temp_current = target_plate_temp - vals->plate_temp;
+    delta_error_plate_temp_current = error_plate_temp_current - error_plate_temp_old;
+
+    //Write new Duty Cycle value
+    vals->duty_cycle = (kp_bb * error_plate_temp_current + kd_bb * delta_error_plate_temp_current);
+    
+    //Overwrite old error values
+    error_plate_temp_old = error_plate_temp_current;
+    delta_error_plate_temp_old = delta_error_plate_temp_current;
+
+      #ifdef DEBUG
+    Serial.println("BANGBANG...");
+    #endif
+    // if (vals->plate_temp < (vals->target_plate_temp-PLATE_HISTERESIS))vals->plate_relay_cmd = true; // Under lower range, activate.
+    // else if (vals->plate_temp > (vals->plate_temp+PLATE_HISTERESIS))vals->plate_relay_cmd = false; // Over upper range, deactivate.
+    
+
+    /*if (vals->plate_temp < (target_plate_temp-PLATE_HISTERESIS))vals->plate_relay_cmd = true; // Under lower range, activate.
+    else if (vals->plate_temp > (target_plate_temp+PLATE_HISTERESIS))vals->plate_relay_cmd = false; // Over upper range, deactivate.*/
+
+    if (current_step < vals->duty_cycle*periodo)
+    {
+      vals->plate_relay_cmd = true;
+    }
+    else
+    {
+      vals->plate_relay_cmd = false;
+    }
+    
+    
+      if (vals->duty_cycle<0.1)
+    {
+      vals->plate_relay_cmd = false;
+    }
+  }
+  else if (vals->plate_temp > (target_plate_temp+PLATE_HISTERESIS))
+  {
+    vals->plate_relay_cmd = false;
+  }
+  
 }
 
 void update_pid(StateVals *vals)
@@ -364,14 +411,16 @@ void execute(StateVals *vals)
       vals->over_temp_flag = false;
     }
 
-    if(!vals->over_temp_flag && vals->plate_relay_cmd)
-    {
-      digitalWrite(PLATE_RELAY_PIN, HIGH);
-    }
-
-    if(vals->over_temp_flag || !vals->plate_relay_cmd)
+    // if(!vals->over_temp_flag && vals->plate_relay_cmd)
+    if(vals->plate_relay_cmd)
     {
       digitalWrite(PLATE_RELAY_PIN, LOW);
+    }
+
+    // if(vals->over_temp_flag || !vals->plate_relay_cmd)
+    if(!vals->plate_relay_cmd)
+    {
+      digitalWrite(PLATE_RELAY_PIN, HIGH);
     }
 
     analogWrite(FAN_PIN, 256);
@@ -381,7 +430,7 @@ void execute(StateVals *vals)
   {
     analogWrite(FAN_PIN, 60);
     analogWrite(HOSE_PIN, 0);
-    digitalWrite(PLATE_RELAY_PIN, false);
+    digitalWrite(PLATE_RELAY_PIN, HIGH);
   }
   
 }
@@ -392,8 +441,8 @@ void read_dht(StateVals *vals)
   Serial.println("Reading DHT...");
   #endif
   float humidity, temp;
-  humidity = dht.readHumidity();
-  temp = dht.readTemperature();
+  //humidity = dht.readHumidity();
+  //temp = dht.readTemperature();
   Serial.println(humidity);
   Serial.println(temp);
   if(isnan(humidity)||isnan(temp))
@@ -610,8 +659,12 @@ void screen_manager(StateVals *vals, uint32_t millis)
   {
 
     //Print ACTUAL Values
-    if(vals->pwr_state) sprintf(buffer, "T:%dC  RH:%3d%%  V:%2dL/min   ON  ", (int)vals->vapor_temp, (int)vals->vapor_humidity, (int)vals->current_airspeed);
-    else sprintf(buffer, "T:%dC  RH:%3d%%  V:%2dL/min   OFF ", (int)vals->vapor_temp, (int)vals->vapor_humidity, (int)vals->current_airspeed);
+    //if(vals->pwr_state) sprintf(buffer, "T:%dC  RH:%3d%%  V:%2dL/min   ON  ", (int)vals->vapor_temp, (int)vals->vapor_humidity, (int)vals->current_airspeed);
+    //else sprintf(buffer, "T:%dC  RH:%3d%%  V:%2dL/min   OFF ", (int)vals->vapor_temp, (int)vals->vapor_humidity, (int)vals->current_airspeed);
+    
+    //Print Thermal resistor values
+    //if(vals->pwr_state) sprintf(buffer, "T:%dC  RH:%3d%%  V:%2dL/min   ON  ", (int)vals->vapor_temp, (int)vals->vapor_humidity, (int)vals->current_airspeed);
+    /*else*/ sprintf(buffer, "R:%dC ADC:%d% T:%d P_state: %d ", (int)vals->them_resistance, (int)vals->adc_therm, (int)vals->plate_temp,(int)vals->plate_relay_state);
   }
   if(millis>next_jahir_screen_update)
   {
@@ -760,10 +813,11 @@ float arr_average(float arr[256], uint16_t size)
 {
   float sum = 0;
   float average = 0;
-  for(int i = 0; i<(size/sizeof(float)); i++) 
+  int i = 0;
+  for(i; i<(size/sizeof(float)); i++) 
   {
     sum = sum + arr[i];
   }
-  average = sum / (size/sizeof(float));
-  return (average);
+  average = sum / i;
+  return (average-7);
 }
