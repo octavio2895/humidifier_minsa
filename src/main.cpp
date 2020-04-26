@@ -440,7 +440,7 @@ void execute(StateVals *vals)
   }
   else
   {
-    analogWrite(FAN_PIN, 60);
+    analogWrite(FAN_PIN, 0);
     analogWrite(HOSE_PIN, 0);
     digitalWrite(PLATE_RELAY_PIN, HIGH);
     vals->plate_relay_state = false;
