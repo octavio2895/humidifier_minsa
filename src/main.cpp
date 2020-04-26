@@ -122,7 +122,7 @@ struct StateVals
   float est_humidity = 0; // Estimated humidity after hose. RH%
   float vapor_abs_humidity = 0; // Current absolute humidity at vapor chamber. g/m3
   float est_abs_humidity = 0; // Estimated absolute humidity after hose. g/m3
-  float target_humidity = 0; // Target plate temperature. °C
+  float target_plate_temp = 0; // Target plate temperature. °C
   float current_airflow = 0; // Air volumetric flow rate. Lts/min
   float current_airspeed = 0; // Air speed. m/s
   uint16_t fan_pwm = 0; // Fan PWM duty cycle.
@@ -309,9 +309,9 @@ void control_bangbang(StateVals *vals, uint32_t millis)
 {
   volatile float error_humidity_current;
   volatile float error_humidity_old;
-  volatile float delta_error_plate_temp_current;
+  volatile float delta_error_humidity_current;
   //volatile float delta_error_humidity_old;
-  const uint16_t target_humidity = vals->target_humidity;
+  //volatile float targe_humidity = 80;//vals->target_humidity;
   volatile uint16_t kp_bb=60, kd_bb=60;
   const uint16_t periodo = 2000;
   volatile uint32_t current_step = millis%periodo,old_millis;
@@ -321,22 +321,22 @@ void control_bangbang(StateVals *vals, uint32_t millis)
   //if (vals->plate_temp < (target_humidity-PLATE_HISTERESIS))
   //{
     //Read error values
-    error_humidity_current = target_humidity - vals->plate_temp;
-    delta_error_plate_temp_current = (error_humidity_current - error_humidity_old)/(millis-old_millis);
+    error_humidity_current = vals->target_humidity - vals->vapor_humidity;
+    delta_error_humidity_current = (error_humidity_current - error_humidity_old)/(millis-old_millis);
 
     //Write new Duty Cycle value
-    vals->duty_cycle = (kp_bb * error_humidity_current + kd_bb * delta_error_plate_temp_current);
+    vals->duty_cycle = (kp_bb * error_humidity_current + kd_bb * delta_error_humidity_current);
     
     //Overwrite old error values
     error_humidity_old = error_humidity_current;
     old_millis = millis;
-    //delta_error_humidity_old = delta_error_plate_temp_current;
+    //delta_error_humidity_old = delta_error_humidity_current;
 
      if (vals->duty_cycle > 100)
      {
         vals->duty_cycle = 100;       
      }
-     else if (vals->duty_cycle < 1)
+     else if (vals->duty_cycle < 0)
      {
         vals->duty_cycle = 0;       
      }
@@ -366,7 +366,7 @@ void control_bangbang(StateVals *vals, uint32_t millis)
       vals->plate_relay_cmd = false;
     }*/
   //}
-  /*else*/ if (vals->plate_temp > target_humidity)
+  /*else*/ if (vals->vapor_humidity > vals->target_humidity)
   {
     vals->plate_relay_cmd = false;
   }
@@ -384,7 +384,7 @@ void update_pid(StateVals *vals)
   float p_humidity_error = humidity_error * kph;
   float p_airflow_error = airflow_error * kpa;
 
-  vals->target_humidity = p_humidity_error;
+  vals->target_plate_temp = p_humidity_error;
   vals->fan_pwm = p_airflow_error;
 
 
@@ -454,8 +454,8 @@ void read_dht(StateVals *vals)
   Serial.println("Reading DHT...");
   #endif
   float humidity, temp;
-  //humidity = dht.readHumidity();
-  //temp = dht.readTemperature();
+  humidity = dht.readHumidity();
+  temp = dht.readTemperature();
   Serial.println(humidity);
   Serial.println(temp);
   if(isnan(humidity)||isnan(temp))
@@ -677,7 +677,7 @@ void screen_manager(StateVals *vals, uint32_t millis)
     
     //Print Thermal resistor values
     //if(vals->pwr_state) sprintf(buffer, "T:%dC  RH:%3d%%  V:%2dL/min   ON  ", (int)vals->vapor_temp, (int)vals->vapor_humidity, (int)vals->current_airspeed);
-    /*else*/ sprintf(buffer, "DC:%dC ADC:%d% T:%d P_state: %d ", (int)vals->duty_cycle, (int)vals->adc_therm, (int)vals->plate_temp,(int)vals->plate_relay_state);
+    /*else*/ sprintf(buffer, "Vap_t:%dC HUM:%d Plte_T:%d St:%d ", (int)vals->vapor_temp, (int)vals->vapor_humidity, (int)vals->plate_temp,(int)vals->plate_relay_state);
   }
   if(millis>next_jahir_screen_update)
   {
