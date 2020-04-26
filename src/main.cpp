@@ -310,27 +310,36 @@ void control_bangbang(StateVals *vals, uint32_t millis)
   volatile float error_plate_temp_current;
   volatile float error_plate_temp_old;
   volatile float delta_error_plate_temp_current;
-  volatile float delta_error_plate_temp_old;
-  const uint16_t target_plate_temp = 110;
-  volatile uint16_t kp_bb=420, kd_bb=420;
+  //volatile float delta_error_plate_temp_old;
+  const uint16_t target_plate_temp = 80;
+  volatile uint16_t kp_bb=60, kd_bb=60;
   const uint16_t periodo = 2000;
-  volatile uint32_t current_step = millis%periodo;
+  volatile uint32_t current_step = millis%periodo,old_millis;
 
   
   //Enter logic if the temperature is going up
-  if (vals->plate_temp < (target_plate_temp-PLATE_HISTERESIS))
-  {
+  //if (vals->plate_temp < (target_plate_temp-PLATE_HISTERESIS))
+  //{
     //Read error values
     error_plate_temp_current = target_plate_temp - vals->plate_temp;
-    delta_error_plate_temp_current = error_plate_temp_current - error_plate_temp_old;
+    delta_error_plate_temp_current = (error_plate_temp_current - error_plate_temp_old)/(millis-old_millis);
 
     //Write new Duty Cycle value
     vals->duty_cycle = (kp_bb * error_plate_temp_current + kd_bb * delta_error_plate_temp_current);
     
     //Overwrite old error values
     error_plate_temp_old = error_plate_temp_current;
-    delta_error_plate_temp_old = delta_error_plate_temp_current;
+    old_millis = millis;
+    //delta_error_plate_temp_old = delta_error_plate_temp_current;
 
+     if (vals->duty_cycle > 100)
+     {
+        vals->duty_cycle = 100;       
+     }
+     else if (vals->duty_cycle < 1)
+     {
+        vals->duty_cycle = 0;       
+     }
       #ifdef DEBUG
     Serial.println("BANGBANG...");
     #endif
@@ -341,22 +350,23 @@ void control_bangbang(StateVals *vals, uint32_t millis)
     /*if (vals->plate_temp < (target_plate_temp-PLATE_HISTERESIS))vals->plate_relay_cmd = true; // Under lower range, activate.
     else if (vals->plate_temp > (target_plate_temp+PLATE_HISTERESIS))vals->plate_relay_cmd = false; // Over upper range, deactivate.*/
 
-    if (current_step < vals->duty_cycle*periodo)
+    if (current_step < (vals->duty_cycle/100)*periodo)
     {
       vals->plate_relay_cmd = true;
     }
     else
     {
       vals->plate_relay_cmd = false;
+      vals->plate_relay_state = false;
     }
     
     
-      if (vals->duty_cycle<0.1)
+    /*  if (vals->duty_cycle<1)
     {
       vals->plate_relay_cmd = false;
-    }
-  }
-  else if (vals->plate_temp > (target_plate_temp+PLATE_HISTERESIS))
+    }*/
+  //}
+  /*else*/ if (vals->plate_temp > target_plate_temp)
   {
     vals->plate_relay_cmd = false;
   }
@@ -415,12 +425,14 @@ void execute(StateVals *vals)
     if(vals->plate_relay_cmd)
     {
       digitalWrite(PLATE_RELAY_PIN, LOW);
+      vals->plate_relay_state = true;
     }
 
     // if(vals->over_temp_flag || !vals->plate_relay_cmd)
     if(!vals->plate_relay_cmd)
     {
       digitalWrite(PLATE_RELAY_PIN, HIGH);
+      vals->plate_relay_state = false;
     }
 
     analogWrite(FAN_PIN, 256);
@@ -431,6 +443,7 @@ void execute(StateVals *vals)
     analogWrite(FAN_PIN, 60);
     analogWrite(HOSE_PIN, 0);
     digitalWrite(PLATE_RELAY_PIN, HIGH);
+    vals->plate_relay_state = false;
   }
   
 }
@@ -664,7 +677,7 @@ void screen_manager(StateVals *vals, uint32_t millis)
     
     //Print Thermal resistor values
     //if(vals->pwr_state) sprintf(buffer, "T:%dC  RH:%3d%%  V:%2dL/min   ON  ", (int)vals->vapor_temp, (int)vals->vapor_humidity, (int)vals->current_airspeed);
-    /*else*/ sprintf(buffer, "R:%dC ADC:%d% T:%d P_state: %d ", (int)vals->them_resistance, (int)vals->adc_therm, (int)vals->plate_temp,(int)vals->plate_relay_state);
+    /*else*/ sprintf(buffer, "DC:%dC ADC:%d% T:%d P_state: %d ", (int)vals->duty_cycle, (int)vals->adc_therm, (int)vals->plate_temp,(int)vals->plate_relay_state);
   }
   if(millis>next_jahir_screen_update)
   {
