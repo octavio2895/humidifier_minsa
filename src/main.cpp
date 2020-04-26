@@ -122,7 +122,7 @@ struct StateVals
   float est_humidity = 0; // Estimated humidity after hose. RH%
   float vapor_abs_humidity = 0; // Current absolute humidity at vapor chamber. g/m3
   float est_abs_humidity = 0; // Estimated absolute humidity after hose. g/m3
-  float target_plate_temp = 0; // Target plate temperature. °C
+  float target_humidity = 0; // Target plate temperature. °C
   float current_airflow = 0; // Air volumetric flow rate. Lts/min
   float current_airspeed = 0; // Air speed. m/s
   uint16_t fan_pwm = 0; // Fan PWM duty cycle.
@@ -307,30 +307,30 @@ void estimate_flow(StateVals *vals)
 
 void control_bangbang(StateVals *vals, uint32_t millis)
 {
-  volatile float error_plate_temp_current;
-  volatile float error_plate_temp_old;
+  volatile float error_humidity_current;
+  volatile float error_humidity_old;
   volatile float delta_error_plate_temp_current;
-  //volatile float delta_error_plate_temp_old;
-  const uint16_t target_plate_temp = 80;
+  //volatile float delta_error_humidity_old;
+  const uint16_t target_humidity = vals->target_humidity;
   volatile uint16_t kp_bb=60, kd_bb=60;
   const uint16_t periodo = 2000;
   volatile uint32_t current_step = millis%periodo,old_millis;
 
   
   //Enter logic if the temperature is going up
-  //if (vals->plate_temp < (target_plate_temp-PLATE_HISTERESIS))
+  //if (vals->plate_temp < (target_humidity-PLATE_HISTERESIS))
   //{
     //Read error values
-    error_plate_temp_current = target_plate_temp - vals->plate_temp;
-    delta_error_plate_temp_current = (error_plate_temp_current - error_plate_temp_old)/(millis-old_millis);
+    error_humidity_current = target_humidity - vals->plate_temp;
+    delta_error_plate_temp_current = (error_humidity_current - error_humidity_old)/(millis-old_millis);
 
     //Write new Duty Cycle value
-    vals->duty_cycle = (kp_bb * error_plate_temp_current + kd_bb * delta_error_plate_temp_current);
+    vals->duty_cycle = (kp_bb * error_humidity_current + kd_bb * delta_error_plate_temp_current);
     
     //Overwrite old error values
-    error_plate_temp_old = error_plate_temp_current;
+    error_humidity_old = error_humidity_current;
     old_millis = millis;
-    //delta_error_plate_temp_old = delta_error_plate_temp_current;
+    //delta_error_humidity_old = delta_error_plate_temp_current;
 
      if (vals->duty_cycle > 100)
      {
@@ -343,12 +343,12 @@ void control_bangbang(StateVals *vals, uint32_t millis)
       #ifdef DEBUG
     Serial.println("BANGBANG...");
     #endif
-    // if (vals->plate_temp < (vals->target_plate_temp-PLATE_HISTERESIS))vals->plate_relay_cmd = true; // Under lower range, activate.
+    // if (vals->plate_temp < (vals->target_humidity-PLATE_HISTERESIS))vals->plate_relay_cmd = true; // Under lower range, activate.
     // else if (vals->plate_temp > (vals->plate_temp+PLATE_HISTERESIS))vals->plate_relay_cmd = false; // Over upper range, deactivate.
     
 
-    /*if (vals->plate_temp < (target_plate_temp-PLATE_HISTERESIS))vals->plate_relay_cmd = true; // Under lower range, activate.
-    else if (vals->plate_temp > (target_plate_temp+PLATE_HISTERESIS))vals->plate_relay_cmd = false; // Over upper range, deactivate.*/
+    /*if (vals->plate_temp < (target_humidity-PLATE_HISTERESIS))vals->plate_relay_cmd = true; // Under lower range, activate.
+    else if (vals->plate_temp > (target_humidity+PLATE_HISTERESIS))vals->plate_relay_cmd = false; // Over upper range, deactivate.*/
 
     if (current_step < (vals->duty_cycle/100)*periodo)
     {
@@ -366,7 +366,7 @@ void control_bangbang(StateVals *vals, uint32_t millis)
       vals->plate_relay_cmd = false;
     }*/
   //}
-  /*else*/ if (vals->plate_temp > target_plate_temp)
+  /*else*/ if (vals->plate_temp > target_humidity)
   {
     vals->plate_relay_cmd = false;
   }
@@ -384,7 +384,7 @@ void update_pid(StateVals *vals)
   float p_humidity_error = humidity_error * kph;
   float p_airflow_error = airflow_error * kpa;
 
-  vals->target_plate_temp = p_humidity_error;
+  vals->target_humidity = p_humidity_error;
   vals->fan_pwm = p_airflow_error;
 
 
@@ -713,7 +713,7 @@ void encoderButtonISR()
   float est_humidity = 0; // Estimated humidity after hose. RH%
   float vapor_abs_humidity = 0; // Current absolute humidity at vapor chamber. g/m3
   float est_abs_humidity = 0; // Estimated absolute humidity after hose. g/m3
-  float target_plate_temp = 0; // Target plate temperature. °C
+  float target_humidity = 0; // Target plate temperature. °C
   float current_airflow = 0; // Air volumetric flow rate. Lts/min
   float current_airspeed = 0; // Air speed. m/s
   uint16_t fan_pwm = 0; // Fan PWM duty cycle.
