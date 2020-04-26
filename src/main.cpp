@@ -86,6 +86,14 @@
 #define BEEP_UPDATE_DELAY       10
 #define BEEP_ONCE_DURATION      300
 
+//PID Values
+#define KP_BB                   60
+#define KD_BB                   60
+#define PERIODO                 2000
+#define KP_FAN                  60
+#define KD_FAN                  60
+#define KI_FAN                  10
+
 // Globlas
 const float zeroWindAdjustment =  .2;
 uint32_t next_flow_update, next_termistor_update, next_dht_update, next_flow_estimation, next_bangbang_control, next_pidfan_control, next_pid_update, next_execute, next_encoder_update, next_screen_update, next_beep_update;
@@ -170,6 +178,7 @@ void encoderButtonISR();
 void encoderISR();
 byte i2c_scanner();
 float arr_average(float *arr, uint16_t size);
+float Integral_control(float *i_control, uint16_t isize);
 //void lcd_buffer_write_debug(char buffer [200],uint16_t buffer_size,uint16_t view_port_init);
 
 
@@ -232,11 +241,11 @@ void loop()
     control_bangbang(&state_vals, millis());
     next_bangbang_control = millis() + BANGBANG_CONTROL_DELAY;
   }
-  /*if (millis() > next_pidfan_control) 
+  if (millis() > next_pidfan_control) 
   {
     control_PID_Fan(&state_vals, millis());
     next_pidfan_control = millis() + PID_FAN_CONTROL_DELAY;
-  }*/
+  }
   if (millis() > next_pid_update) 
   {
     update_pid(&state_vals);
@@ -315,14 +324,12 @@ void estimate_flow(StateVals *vals)
 
 void control_bangbang(StateVals *vals, uint32_t millis)
 {
-  volatile float error_humidity_current;
-  volatile float error_humidity_old;
-  volatile float delta_error_humidity_current;
+  static float error_humidity_current;
+  static float error_humidity_old;
+  static float delta_error_humidity_current;
   //volatile float delta_error_humidity_old;
   //volatile float targe_humidity = 80;//vals->target_humidity;
-  volatile uint16_t kp_bb=60, kd_bb=60;
-  const uint16_t periodo = 2000;
-  volatile uint32_t current_step = millis%periodo,old_millis;
+  static uint32_t current_step = millis%PERIODO,old_millis;
 
   
   //Enter logic if the temperature is going up
@@ -333,7 +340,7 @@ void control_bangbang(StateVals *vals, uint32_t millis)
     delta_error_humidity_current = (error_humidity_current - error_humidity_old)/(millis-old_millis);
 
     //Write new Duty Cycle value
-    vals->duty_cycle = (kp_bb * error_humidity_current + kd_bb * delta_error_humidity_current);
+    vals->duty_cycle = (KP_BB * error_humidity_current + KD_BB * delta_error_humidity_current);
     
     //Overwrite old error values
     error_humidity_old = error_humidity_current;
@@ -358,7 +365,7 @@ void control_bangbang(StateVals *vals, uint32_t millis)
     /*if (vals->plate_temp < (target_humidity-PLATE_HISTERESIS))vals->plate_relay_cmd = true; // Under lower range, activate.
     else if (vals->plate_temp > (target_humidity+PLATE_HISTERESIS))vals->plate_relay_cmd = false; // Over upper range, deactivate.*/
 
-    if (current_step < (vals->duty_cycle/100)*periodo)
+    if (current_step < (vals->duty_cycle/100)*PERIODO)
     {
       vals->plate_relay_cmd = true;
     }
@@ -374,46 +381,60 @@ void control_bangbang(StateVals *vals, uint32_t millis)
       vals->plate_relay_cmd = false;
     }*/
   //}
-  /*else*/ if (vals->vapor_humidity > vals->target_humidity || vals->plate_temp > 150)
-  {
-    vals->plate_relay_cmd = false;
-  }
+  /*else*/ 
+    if (vals->vapor_humidity > vals->target_humidity || vals->plate_temp > 130)
+    {
+      vals->plate_relay_cmd = false;
+    }
 
 }
 
 void control_PID_Fan(StateVals *vals, uint32_t millis)
 {
-  volatile float error_airflow_current;
-  volatile float error_airflow_old;
-  volatile float delta_error_airflow_current, integral_error_airflow_current;
-  volatile uint16_t kp_fan=60, ki_fan=60, kd_fan=60;
-  const uint16_t periodo = 2000;
-  volatile uint32_t current_step = millis%periodo,old_millis;
+  static float error_airflow_current;
+  static float error_airflow_old;
+  static float delta_error_airflow_current, integral_error_airflow_current;
+  static uint32_t old_millis;
 
-  
+  //TODO Turn into a function - Integral limiter
+  static float delta_time  = (millis-old_millis);
+  static uint8_t integral_num = 0;
+  static float integral_array[256];
+  static bool init = 0;
+    if (!init)
+      {
+        for(int i = 0; i<(sizeof(integral_array)/sizeof(integral_array[0])); i++)
+        {
+          integral_array[i] = 0.0;
+        }
+        init = true;
+      }
+    integral_array[integral_num] = error_airflow_current*delta_time;
+    integral_num++;
+    integral_error_airflow_current = Integral_control(integral_array, sizeof(integral_array));
+
   //Enter logic if the temperature is going up
   //if (vals->plate_temp < (target_humidity-PLATE_HISTERESIS))
   //{
     //Read error values
     error_airflow_current = vals->target_airflow - vals->current_airflow;
     delta_error_airflow_current = (error_airflow_current - error_airflow_old)/(millis-old_millis);
-    integral_error_airflow_current += error_airflow_current * (millis-old_millis);
-
+    
     //Write new Duty Cycle value    
-    vals->duty_cycle = (kp_fan * error_airflow_current + ki_fan * integral_error_airflow_current +  kd_fan * delta_error_airflow_current);
+    vals->fan_duty_cycle = (KP_FAN * error_airflow_current + KI_FAN * integral_error_airflow_current +  KD_FAN * delta_error_airflow_current);
     
     //Overwrite old error values
     error_airflow_old = error_airflow_current;
     old_millis = millis;
     //delta_error_humidity_old = delta_error_humidity_current;
 
-     if (vals->fan_duty_cycle > 100)
+     if (vals->fan_duty_cycle > 256)
      {
-        vals->fan_duty_cycle = 100;       
+        vals->fan_duty_cycle = 256;       
      }
-     else if (vals->fan_duty_cycle < 0)
+     else if (vals->fan_duty_cycle < 50)
      {
-        vals->fan_duty_cycle = 0;       
+        vals->fan_duty_cycle = 50;       
      }
       #ifdef DEBUG
     Serial.println("BANGBANG...");
@@ -425,27 +446,7 @@ void control_PID_Fan(StateVals *vals, uint32_t millis)
     /*if (vals->plate_temp < (target_humidity-PLATE_HISTERESIS))vals->plate_relay_cmd = true; // Under lower range, activate.
     else if (vals->plate_temp > (target_humidity+PLATE_HISTERESIS))vals->plate_relay_cmd = false; // Over upper range, deactivate.*/
 
-    if (current_step < (vals->fan_duty_cycle/100)*periodo)
-    {
-      vals->plate_relay_cmd = true;
-    }
-    else
-    {
-      vals->plate_relay_cmd = false;
-      vals->plate_relay_state = false;
-    }
-    
-    
-      if (vals->fan_duty_cycle<1)
-    {
-      vals->plate_relay_cmd = false;
-    }
-  //}
-  /*else*/ 
-    if (vals->vapor_humidity > vals->target_humidity || vals->plate_temp > 130)
-    {
-      vals->plate_relay_cmd = false;
-    }
+ 
 
 }
 
@@ -909,4 +910,16 @@ float arr_average(float arr[256], uint16_t size)
   }
   average = sum / i;
   return (average-7);
+}
+
+float Integral_control(float i_control[256], uint16_t isize)
+{
+  float sum = 0;
+  float integral_error = 0;
+  int i = 0;
+  for(i; i<(isize/sizeof(float)); i++) 
+  {
+    sum = sum + i_control[i];
+  }
+  return (sum);
 }
