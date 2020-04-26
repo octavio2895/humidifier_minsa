@@ -512,7 +512,7 @@ void execute(StateVals *vals)
       vals->plate_relay_state = false;
     }
 
-    analogWrite(FAN_PIN, 256);
+    analogWrite(FAN_PIN, vals->fan_duty_cycle);
     analogWrite(HOSE_PIN, vals->hose_pwm);
   }
   else
