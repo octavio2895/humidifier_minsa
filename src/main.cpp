@@ -78,6 +78,7 @@
 #define DHT_UPDATE_DELAY        2005
 #define FLOW_ESTIMATION_DELAY   100
 #define BANGBANG_CONTROL_DELAY  100
+#define PID_FAN_CONTROL_DELAY   100
 #define PID_UPDATE_DELAY        100
 #define EXECUTE_DELAY           100
 #define ENCODER_UPDATE_DELAY    10
@@ -87,7 +88,7 @@
 
 // Globlas
 const float zeroWindAdjustment =  .2;
-uint32_t next_flow_update, next_termistor_update, next_dht_update, next_flow_estimation, next_bangbang_control, next_pid_update, next_execute, next_encoder_update, next_screen_update, next_beep_update;
+uint32_t next_flow_update, next_termistor_update, next_dht_update, next_flow_estimation, next_bangbang_control, next_pidfan_control, next_pid_update, next_execute, next_encoder_update, next_screen_update, next_beep_update;
 float kpa, kph;
 
 //Globals raras de Jahir
@@ -139,6 +140,7 @@ struct StateVals
   uint16_t adc_therm = 0;
   float them_resistance = 0;
   float duty_cycle = 0;
+  float fan_duty_cycle = 0;
 }state_vals;
 
 // Objects
@@ -154,6 +156,7 @@ void read_flow(StateVals *vals);
 void read_thermistor(StateVals *vals);
 void estimate_flow(StateVals *vals);
 void control_bangbang(StateVals *vals,uint32_t millis);
+void control_PID_Fan(StateVals *vals,uint32_t millis);
 void update_pid(StateVals *vals);
 void execute(StateVals *vals);
 void read_dht(StateVals *vals);
@@ -229,6 +232,11 @@ void loop()
     control_bangbang(&state_vals, millis());
     next_bangbang_control = millis() + BANGBANG_CONTROL_DELAY;
   }
+  /*if (millis() > next_pidfan_control) 
+  {
+    control_PID_Fan(&state_vals, millis());
+    next_pidfan_control = millis() + PID_FAN_CONTROL_DELAY;
+  }*/
   if (millis() > next_pid_update) 
   {
     update_pid(&state_vals);
@@ -366,11 +374,79 @@ void control_bangbang(StateVals *vals, uint32_t millis)
       vals->plate_relay_cmd = false;
     }*/
   //}
-  /*else*/ if (vals->vapor_humidity > vals->target_humidity)
+  /*else*/ if (vals->vapor_humidity > vals->target_humidity || vals->plate_temp > 150)
   {
     vals->plate_relay_cmd = false;
   }
+
+}
+
+void control_PID_Fan(StateVals *vals, uint32_t millis)
+{
+  volatile float error_airflow_current;
+  volatile float error_airflow_old;
+  volatile float delta_error_airflow_current, integral_error_airflow_current;
+  volatile uint16_t kp_fan=60, ki_fan=60, kd_fan=60;
+  const uint16_t periodo = 2000;
+  volatile uint32_t current_step = millis%periodo,old_millis;
+
   
+  //Enter logic if the temperature is going up
+  //if (vals->plate_temp < (target_humidity-PLATE_HISTERESIS))
+  //{
+    //Read error values
+    error_airflow_current = vals->target_airflow - vals->current_airflow;
+    delta_error_airflow_current = (error_airflow_current - error_airflow_old)/(millis-old_millis);
+    integral_error_airflow_current += error_airflow_current * (millis-old_millis);
+
+    //Write new Duty Cycle value    
+    vals->duty_cycle = (kp_fan * error_airflow_current + ki_fan * integral_error_airflow_current +  kd_fan * delta_error_airflow_current);
+    
+    //Overwrite old error values
+    error_airflow_old = error_airflow_current;
+    old_millis = millis;
+    //delta_error_humidity_old = delta_error_humidity_current;
+
+     if (vals->fan_duty_cycle > 100)
+     {
+        vals->fan_duty_cycle = 100;       
+     }
+     else if (vals->fan_duty_cycle < 0)
+     {
+        vals->fan_duty_cycle = 0;       
+     }
+      #ifdef DEBUG
+    Serial.println("BANGBANG...");
+    #endif
+    // if (vals->plate_temp < (vals->target_humidity-PLATE_HISTERESIS))vals->plate_relay_cmd = true; // Under lower range, activate.
+    // else if (vals->plate_temp > (vals->plate_temp+PLATE_HISTERESIS))vals->plate_relay_cmd = false; // Over upper range, deactivate.
+    
+
+    /*if (vals->plate_temp < (target_humidity-PLATE_HISTERESIS))vals->plate_relay_cmd = true; // Under lower range, activate.
+    else if (vals->plate_temp > (target_humidity+PLATE_HISTERESIS))vals->plate_relay_cmd = false; // Over upper range, deactivate.*/
+
+    if (current_step < (vals->fan_duty_cycle/100)*periodo)
+    {
+      vals->plate_relay_cmd = true;
+    }
+    else
+    {
+      vals->plate_relay_cmd = false;
+      vals->plate_relay_state = false;
+    }
+    
+    
+      if (vals->fan_duty_cycle<1)
+    {
+      vals->plate_relay_cmd = false;
+    }
+  //}
+  /*else*/ 
+    if (vals->vapor_humidity > vals->target_humidity || vals->plate_temp > 130)
+    {
+      vals->plate_relay_cmd = false;
+    }
+
 }
 
 void update_pid(StateVals *vals)
