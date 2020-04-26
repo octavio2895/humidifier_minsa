@@ -396,7 +396,16 @@ void control_PID_Fan(StateVals *vals, uint32_t millis)
   static float delta_error_airflow_current, integral_error_airflow_current;
   static uint32_t old_millis;
 
-  //TODO Turn into a function - Integral limiter
+  
+
+  //Enter logic if the temperature is going up
+  //if (vals->plate_temp < (target_humidity-PLATE_HISTERESIS))
+  //{
+    //Read error values
+    error_airflow_current = vals->target_airflow - vals->current_airflow;
+    delta_error_airflow_current = (error_airflow_current - error_airflow_old)/(millis-old_millis);
+    
+    //TODO Turn into a function - Integral limiter
   static float delta_time  = (millis-old_millis);
   static uint8_t integral_num = 0;
   static float integral_array[256];
@@ -412,13 +421,6 @@ void control_PID_Fan(StateVals *vals, uint32_t millis)
     integral_array[integral_num] = error_airflow_current*delta_time;
     integral_num++;
     integral_error_airflow_current = Integral_control(integral_array, sizeof(integral_array));
-
-  //Enter logic if the temperature is going up
-  //if (vals->plate_temp < (target_humidity-PLATE_HISTERESIS))
-  //{
-    //Read error values
-    error_airflow_current = vals->target_airflow - vals->current_airflow;
-    delta_error_airflow_current = (error_airflow_current - error_airflow_old)/(millis-old_millis);
     
     //Write new Duty Cycle value    
     vals->fan_duty_cycle = (KP_FAN * error_airflow_current + KI_FAN * integral_error_airflow_current +  KD_FAN * delta_error_airflow_current);
@@ -754,7 +756,7 @@ void screen_manager(StateVals *vals, uint32_t millis)
     
     //Print Thermal resistor values
     //if(vals->pwr_state) sprintf(buffer, "T:%dC  RH:%3d%%  V:%2dL/min   ON  ", (int)vals->vapor_temp, (int)vals->vapor_humidity, (int)vals->current_airspeed);
-    /*else*/ sprintf(buffer, "Vap_t:%dC HUM:%d Plte_T:%d St:%d ", (int)vals->vapor_temp, (int)vals->vapor_humidity, (int)vals->plate_temp,(int)vals->plate_relay_state);
+    /*else*/ sprintf(buffer, "Air_F:%dC HUM:%d Plte_T:%d St:%d ", (int)vals->current_airflow, (int)vals->vapor_humidity, (int)vals->plate_temp,(int)vals->plate_relay_state);
   }
   if(millis>next_jahir_screen_update)
   {
