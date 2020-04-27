@@ -59,7 +59,7 @@
 #define FAN_PIN                 PA10
 #define HOSE_PIN                PA9
 #define PIN_A                   PA7 
-#define PIN_B                   PA6 
+#define PIN_B                   PA6
 #define BUTTON                  PA5
 #define BUZZER_PIN              PA0
 
@@ -194,14 +194,29 @@ void setup()
   pinMode(DHTPIN, INPUT);
   pinMode(PIN_THERMISTOR, INPUT_ANALOG);
   pinMode(WIND_THERM_PIN, INPUT_ANALOG); 
-  pinMode(WIND_SPEED_PIN, INPUT_ANALOG); 
+  pinMode(WIND_SPEED_PIN, INPUT_ANALOG);
+  pinMode(BUZZER_PIN, OUTPUT);
   lcd.begin(LCD_COLUMNS, LCD_ROWS, LCD_5x8DOTS);
-  lcd_buffer_write("Humidifier v0.01FABLAB-MINSA-UTP", 32);
   encoder.begin();
   dht.begin();
   attachInterrupt(digitalPinToInterrupt(PIN_A), encoderISR, CHANGE);
-  attachInterrupt(digitalPinToInterrupt(PIN_B), encoderISR, CHANGE); 
+  attachInterrupt(digitalPinToInterrupt(PIN_B), encoderISR, CHANGE);
+  digitalWrite(BUZZER_PIN, HIGH);
+  lcd_buffer_write("Humidifier v0.01FABLAB-MINSA-UTP", 32);
   delay(2000);
+  digitalWrite(BUZZER_PIN, LOW);
+  lcd_buffer_write("PROTOTIPO  ALPHAUSO EXPERIMENTAL", 32);
+  digitalWrite(BUZZER_PIN, HIGH);
+  delay(300);
+  digitalWrite(BUZZER_PIN, LOW);
+  delay(300);
+  digitalWrite(BUZZER_PIN, HIGH);
+  delay(300);
+  digitalWrite(BUZZER_PIN, LOW);
+  delay(300);
+  digitalWrite(BUZZER_PIN, HIGH);
+  delay(300);
+  digitalWrite(BUZZER_PIN, LOW);
  /* button1.Update();
   if(button1.clicks =! 0)
   {
@@ -569,7 +584,7 @@ void read_thermistor(StateVals *vals)
   // temp_array[temp_num] = (B_VALUE*(25+273.15) / ((25+273.15)*log(resistance/100000)+B_VALUE)) - 273.15;
   temp_array[temp_num] = (B_VALUE) / (log(resistance)+1.73544) - 273.15;
   temp_num++;
-  vals->plate_temp = arr_average(temp_array, sizeof(temp_array));
+  vals->plate_temp = arr_average(temp_array, sizeof(temp_array)) - 7;
   vals->adc_therm = adc_read;
   vals->them_resistance = resistance;
 }
@@ -911,7 +926,7 @@ float arr_average(float arr[256], uint16_t size)
     sum = sum + arr[i];
   }
   average = sum / i;
-  return (average-7);
+  return (average);
 }
 
 float Integral_control(float i_control[256], uint16_t isize)
@@ -919,9 +934,14 @@ float Integral_control(float i_control[256], uint16_t isize)
   float sum = 0;
   float integral_error = 0;
   int i = 0;
-  for(i; i<(isize/sizeof(float)); i++) 
+  for(i; i<(isize/sizeof(float)); i++)
   {
     sum = sum + i_control[i];
   }
   return (sum);
+}
+
+void alarm_manager(StateVals &vals)
+{
+
 }
