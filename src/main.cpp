@@ -226,70 +226,134 @@ void setup()
 
 void loop() 
 {
-  if (millis() > next_beep_update)
+  static bool next_beep_overflow_flag = false, flow_estimate_overflow_flag = false, thermistor_update_overflow_flag = false, dht_update_overflow_flag = false, next_estimation_overflow_flag = false, next_bangbang_overflow_flag = false, next_pidfan_overflow_flag = false, pid_update_overflow_flag = false, next_execute_overflow_flag = false, next_encoder_overflow_flag = false, screen_update_overflow_flag = false;
+
+  if (!next_beep_overflow_flag)
   {
-    beep_manager(&state_vals);
-    next_beep_update = millis() + BEEP_UPDATE_DELAY;
-  }
-  if (millis() > next_flow_update) 
-  {
-    read_flow(&state_vals);
-    next_flow_update = millis() + FLOW_UPDATE_DELAY;
-  }
-  if (millis() > next_termistor_update) 
-  {
-    read_thermistor(&state_vals);
-    next_termistor_update = millis() + TERMISTOR_UPDATE_DELAY;
-  }
-  if (millis() > next_dht_update) 
-  {
-    read_dht(&state_vals);
-    next_dht_update = millis() + DHT_UPDATE_DELAY;
-  }
-  if (millis() > next_flow_estimation) 
-  {
-    estimate_flow(&state_vals);
-    next_flow_estimation = millis() + FLOW_ESTIMATION_DELAY;
-  }
-  if (millis() > next_bangbang_control) 
-  {
-    control_bangbang(&state_vals, millis());
-    next_bangbang_control = millis() + BANGBANG_CONTROL_DELAY;
-  }
-  if (millis() > next_pidfan_control) 
-  {
-    control_PID_Fan(&state_vals, millis());
-    next_pidfan_control = millis() + PID_FAN_CONTROL_DELAY;
-  }
-  if (millis() > next_pid_update) 
-  {
-    update_pid(&state_vals);
-    next_pid_update = millis() + PID_UPDATE_DELAY;
-  }
-  if (millis() > next_execute) 
-  {
-    execute(&state_vals);
-    next_execute = millis() + EXECUTE_DELAY;
-  }
-  if (millis() > next_encoder_update) 
-  {
-    read_encoder(&state_vals);
-    next_encoder_update = millis() + ENCODER_UPDATE_DELAY;
-  }
-  if (millis() > next_screen_update) 
-  {
-    if(!debug)
+    if(millis() > next_beep_update )
     {
-      screen_manager(&state_vals, millis());
+      beep_manager(&state_vals);
+      next_beep_update = millis() + BEEP_UPDATE_DELAY;
+      if(next_beep_update < millis()) next_beep_overflow_flag = true;
     }
-    else
-    {
-      screen_debug_manager(&state_vals, millis());
-    }
-    
-    
-    next_screen_update = millis() + SCREEN_UPDATE_DELAY;
   }
+  else if(millis() < next_beep_update) next_beep_overflow_flag = false;
+
+  if (!flow_estimate_overflow_flag)
+  {
+    if (millis() > next_flow_update) 
+    {
+      read_flow(&state_vals);
+      next_flow_update = millis() + FLOW_UPDATE_DELAY;
+      if(next_flow_update < millis()) flow_estimate_overflow_flag = true;
+    }
+  }
+  else if(millis() < next_flow_update) flow_estimate_overflow_flag = false;
+
+  if (!thermistor_update_overflow_flag)
+  {
+    if (millis() > next_termistor_update) 
+    {
+      read_thermistor(&state_vals);
+      next_termistor_update = millis() + TERMISTOR_UPDATE_DELAY;
+      if(next_termistor_update < millis()) thermistor_update_overflow_flag = true;
+    }
+  }
+  else if(millis() < next_flow_update) thermistor_update_overflow_flag = false;
+
+  if (!dht_update_overflow_flag)
+    if (millis() > next_dht_update) 
+    {
+      read_dht(&state_vals);
+      next_dht_update = millis() + DHT_UPDATE_DELAY;
+      if(next_dht_update < millis()) dht_update_overflow_flag = true;
+    }
+  else if(millis() < next_dht_update) dht_update_overflow_flag = false;
+
+  if (!next_estimation_overflow_flag)
+  {
+    if (millis() > next_flow_estimation) 
+    {
+      estimate_flow(&state_vals);
+      next_flow_estimation = millis() + FLOW_ESTIMATION_DELAY;
+      if(next_flow_estimation < millis()) next_estimation_overflow_flag = true;
+    }
+  }
+  else if(millis() < next_flow_estimation) next_estimation_overflow_flag = false;
+
+  if (!next_bangbang_overflow_flag)
+  {
+    if (millis() > next_bangbang_control) 
+    {
+      control_bangbang(&state_vals, millis());
+      next_bangbang_control = millis() + BANGBANG_CONTROL_DELAY;
+      if(next_bangbang_control < millis()) next_bangbang_overflow_flag = true;
+    }
+  }
+  else if(millis() < next_bangbang_control) next_bangbang_overflow_flag = false;
+
+  if (!next_pidfan_overflow_flag)
+  {
+    if (millis() > next_pidfan_control) 
+    {
+      control_PID_Fan(&state_vals, millis());
+      next_pidfan_control = millis() + PID_FAN_CONTROL_DELAY;
+      if(next_pidfan_control < millis()) next_pidfan_overflow_flag = true;
+    }
+  }
+  else if(millis() < next_pidfan_control) next_pidfan_overflow_flag = false;pid_update_overflow_flag;
+
+  if (!pid_update_overflow_flag)
+  {
+    if (millis() > next_pid_update) 
+    {
+      update_pid(&state_vals);
+      next_pid_update = millis() + PID_UPDATE_DELAY;
+      if(next_pid_update < millis()) pid_update_overflow_flag = true;
+    }
+  }
+  else if(millis() < next_pid_update) pid_update_overflow_flag = false;
+
+  if (!next_execute_overflow_flag)
+  {
+    if (millis() > next_execute) 
+    {
+      execute(&state_vals);
+      next_execute = millis() + EXECUTE_DELAY;
+      if(next_execute < millis()) next_execute_overflow_flag = true;
+    }
+  }
+  else if(millis() < next_execute) next_execute_overflow_flag = false;
+
+  if (!next_encoder_overflow_flag)
+  {
+    if (millis() > next_encoder_update) 
+    {
+      read_encoder(&state_vals);
+      next_encoder_update = millis() + ENCODER_UPDATE_DELAY;
+      if(next_encoder_update < millis()) next_encoder_overflow_flag = true;
+    }
+  }
+  else if(millis() < next_encoder_update) next_encoder_overflow_flag = false;
+
+  if (!screen_update_overflow_flag)
+  {
+    if (millis() > next_screen_update) 
+    {
+      if(!debug)
+      {
+        screen_manager(&state_vals, millis());
+      }
+      else
+      {
+        screen_debug_manager(&state_vals, millis());
+      }
+      next_screen_update = millis() + SCREEN_UPDATE_DELAY;
+      if(next_screen_update < millis()) screen_update_overflow_flag = true;
+    }
+  }
+  else if(millis() < next_screen_update) screen_update_overflow_flag = false;
+
 }
 
 void estimate_flow(StateVals *vals)
