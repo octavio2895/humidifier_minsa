@@ -163,14 +163,14 @@ ClickButton button1(BUTTON, LOW, CLICKBTN_PULLUP);
 void read_flow(StateVals *vals);
 void read_thermistor(StateVals *vals);
 void estimate_flow(StateVals *vals);
-void control_bangbang(StateVals *vals,uint32_t millis);
-void control_PID_Fan(StateVals *vals,uint32_t millis);
+void control_bangbang(StateVals *vals);
+void control_PID_Fan(StateVals *vals);
 void update_pid(StateVals *vals);
 void execute(StateVals *vals);
 void read_dht(StateVals *vals);
 void read_encoder(StateVals *vals);
-void screen_manager(StateVals *vals, uint32_t millis);
-void screen_debug_manager(StateVals *vals, uint32_t millis);
+void screen_manager(StateVals *vals);
+void screen_debug_manager(StateVals *vals);
 float get_density(float temp);
 void lcd_buffer_write(char buffer[32], uint16_t sizeof_buffer);
 void beep_manager(StateVals *vals);
@@ -253,12 +253,13 @@ void loop()
   }
   if (millis() > next_bangbang_control) 
   {
-    control_bangbang(&state_vals, millis());
+    control_bangbang(&state_vals);
     next_bangbang_control = millis() + BANGBANG_CONTROL_DELAY;
   }
   if (millis() > next_pidfan_control) 
   {
-    control_PID_Fan(&state_vals, millis());
+    //control_PID_Fan(&state_vals, millis());
+
     next_pidfan_control = millis() + PID_FAN_CONTROL_DELAY;
   }
   if (millis() > next_pid_update) 
@@ -280,11 +281,11 @@ void loop()
   {
     if(!debug)
     {
-      screen_manager(&state_vals, millis());
+      screen_manager(&state_vals);
     }
     else
     {
-      screen_debug_manager(&state_vals, millis());
+      screen_debug_manager(&state_vals);
     }
     
     
@@ -337,14 +338,14 @@ void estimate_flow(StateVals *vals)
   #endif
 }
 
-void control_bangbang(StateVals *vals, uint32_t millis)
+void control_bangbang(StateVals *vals)
 {
   static float error_humidity_current;
   static float error_humidity_old;
   static float delta_error_humidity_current;
   //volatile float delta_error_humidity_old;
   //volatile float targe_humidity = 80;//vals->target_humidity;
-  static uint32_t current_step = millis%PERIODO,old_millis;
+  static uint32_t current_step = millis()%PERIODO,old_millis;
 
   
   //Enter logic if the temperature is going up
@@ -352,14 +353,14 @@ void control_bangbang(StateVals *vals, uint32_t millis)
   //{
     //Read error values
     error_humidity_current = vals->target_humidity - vals->vapor_humidity;
-    delta_error_humidity_current = (error_humidity_current - error_humidity_old)/(millis-old_millis);
+    delta_error_humidity_current = (error_humidity_current - error_humidity_old)/(millis()-old_millis);
 
     //Write new Duty Cycle value
     vals->duty_cycle = (KP_BB * error_humidity_current + KD_BB * delta_error_humidity_current);
     
     //Overwrite old error values
     error_humidity_old = error_humidity_current;
-    old_millis = millis;
+    old_millis = millis();
     //delta_error_humidity_old = delta_error_humidity_current;
 
      if (vals->duty_cycle > 100)
@@ -404,7 +405,7 @@ void control_bangbang(StateVals *vals, uint32_t millis)
 
 }
 
-void control_PID_Fan(StateVals *vals, uint32_t millis)
+void control_PID_Fan(StateVals *vals)
 {
   static float error_airflow_current;
   static float error_airflow_old;
@@ -452,17 +453,7 @@ void control_PID_Fan(StateVals *vals, uint32_t millis)
      {
         vals->fan_duty_cycle = 0;       
      }
-      #ifdef DEBUG
-    Serial.println("BANGBANG...");
-    #endif
-    // if (vals->plate_temp < (vals->target_humidity-PLATE_HISTERESIS))vals->plate_relay_cmd = true; // Under lower range, activate.
-    // else if (vals->plate_temp > (vals->plate_temp+PLATE_HISTERESIS))vals->plate_relay_cmd = false; // Over upper range, deactivate.
     
-
-    /*if (vals->plate_temp < (target_humidity-PLATE_HISTERESIS))vals->plate_relay_cmd = true; // Under lower range, activate.
-    else if (vals->plate_temp > (target_humidity+PLATE_HISTERESIS))vals->plate_relay_cmd = false; // Over upper range, deactivate.*/
-
- 
 
 }
 
@@ -621,7 +612,7 @@ void read_encoder(StateVals *vals)
 }
 
 
-void screen_manager(StateVals *vals, uint32_t millis)
+void screen_manager(StateVals *vals)
 {
   #ifdef DEBUG
   Serial.println("Updating LCD...");
@@ -782,10 +773,10 @@ void screen_manager(StateVals *vals, uint32_t millis)
     /*else*/ sprintf(buffer, "Air_F:%dspd Therm:%dC  FPWM:%d St:%d ", (int)vals->current_airflow, (int)vals->current_airspeed, (int)vals->fan_duty_cycle,(int)vals->plate_relay_state);
     
   }
-  if(millis>next_jahir_screen_update)
+  if(millis()>next_jahir_screen_update)
   {
     lcd_buffer_write(buffer, sizeof(buffer));
-    next_jahir_screen_update = millis + 300;
+    next_jahir_screen_update = millis() + 300;
   }
   return;
 }
