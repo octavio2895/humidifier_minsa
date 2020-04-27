@@ -287,7 +287,7 @@ void loop()
   {
     if (millis() > next_bangbang_control) 
     {
-      control_bangbang(&state_vals, millis());
+      control_bangbang(&state_vals);
       next_bangbang_control = millis() + BANGBANG_CONTROL_DELAY;
       if(next_bangbang_control < millis()) next_bangbang_overflow_flag = true;
     }
@@ -298,7 +298,7 @@ void loop()
   {
     if (millis() > next_pidfan_control) 
     {
-      control_PID_Fan(&state_vals, millis());
+      control_PID_Fan(&state_vals);
       next_pidfan_control = millis() + PID_FAN_CONTROL_DELAY;
       if(next_pidfan_control < millis()) next_pidfan_overflow_flag = true;
     }
@@ -346,11 +346,11 @@ void loop()
     {
       if(!debug)
       {
-        screen_manager(&state_vals, millis());
+        screen_manager(&state_vals);
       }
       else
       {
-        screen_debug_manager(&state_vals, millis());
+        screen_debug_manager(&state_vals);
       }
       next_screen_update = millis() + SCREEN_UPDATE_DELAY;
       if(next_screen_update < millis()) screen_update_overflow_flag = true;
@@ -392,7 +392,7 @@ void estimate_flow(StateVals *vals)
   // serial_buff = "";
   sprintf(serial_buff, "DEBUG: AirMassFlow is estimated to be about %1.5f kg/m3", air_mass_flow);
   Serial.println(serial_buff);
-  // serial_buff = "";
+  // serial_buff = "";control_bangbang
   sprintf(serial_buff, "DEBUG: WaterMassFlow is estimated to be about %1.5f kg/m3", water_mass_flow);
   Serial.println(serial_buff);
   // serial_buff = "";
