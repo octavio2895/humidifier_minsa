@@ -266,7 +266,7 @@ void loop()
   }
   if (millis() > next_pid_update) 
   {
-    update_pid(&state_vals);
+    //update_pid(&state_vals);
     next_pid_update = millis() + PID_UPDATE_DELAY;
   }
   if (millis() > next_execute) 
@@ -462,8 +462,7 @@ void control_PID_Fan(StateVals *vals)
 void mapped_fan_control(StateVals *vals)
 {
   //Map target_flow (0-100%) to PWM[50,256] 
-  int val = map(vals->target_airflow, 0, 100, 50, 256);
-  vals->fan_pwm = val;//PWM value
+  vals->fan_pwm = map(vals->target_airflow, 0, 100, 50, 256);
 }
 
 void update_pid(StateVals *vals)
@@ -633,7 +632,7 @@ void screen_manager(StateVals *vals)
   
   static const char posx[4] = {4,13,4,13};
   static const char posy[4] = {0,0,1,1};
-
+ 
   static char range_temp[11];
   static char range_rh[101];
   static char range_v[101]; //Previously 41
@@ -768,18 +767,20 @@ void screen_manager(StateVals *vals)
       default:
         break;
       }
-    sprintf(buffer, " T:%2dC  RH:%3d%%  V:%3dL/min  %c%c%c ", target_temp,target_humidity,target_v,lcd_st[target_st][0],lcd_st[target_st][1],lcd_st[target_st][2]);
+    sprintf(buffer, " T:%2dC  RH:%3d%%  V:%3d%%      %c%c%c ", target_temp,target_humidity,target_v,lcd_st[target_st][0],lcd_st[target_st][1],lcd_st[target_st][2]);
   }
   else //Background Mode
   {
 
     //Print ACTUAL Values
-    //if(vals->pwr_state) sprintf(buffer, "T:%dC  RH:%3d%%  V:%2dL/min   ON  ", (int)vals->vapor_temp, (int)vals->vapor_humidity, (int)vals->current_airspeed);
-    //else sprintf(buffer, "T:%dC  RH:%3d%%  V:%2dL/min   OFF ", (int)vals->vapor_temp, (int)vals->vapor_humidity, (int)vals->current_airspeed);
+    if(vals->pwr_state) sprintf(buffer, "T:%dC  RH:%3d%%  V:%2dL/min   ON  ", (int)vals->vapor_temp, (int)vals->vapor_humidity, (int)vals->current_airflow);
+    else sprintf(buffer, "T:%dC  RH:%3d%%  V:%2dL/min   OFF ", (int)vals->vapor_temp, (int)vals->vapor_humidity, (int)vals->current_airflow);
     
     //Print Thermal resistor values
     //if(vals->pwr_state) sprintf(buffer, "T:%dC  RH:%3d%%  V:%2dL/min   ON  ", (int)vals->vapor_temp, (int)vals->vapor_humidity, (int)vals->current_airspeed);
-    /*else*/ sprintf(buffer, "Air_F:%dspd Therm:%dC  FPWM:%d St:%d ", (int)vals->current_airflow, (int)vals->current_airspeed, (int)vals->fan_pwm,(int)vals->plate_relay_state);
+    /*else*/ 
+    //DEBUG
+    //sprintf(buffer, "Air_F:%dspd Therm:%dC  FPWM:%d St:%d ", (int)vals->current_airflow, (int)vals->current_airspeed, (int)vals->fan_pwm,(int)vals->plate_relay_state);
     
   }
   if(millis()>next_jahir_screen_update)
