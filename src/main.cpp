@@ -40,7 +40,6 @@
 #include <RotaryEncoder.h>
 #include <ClickButton.h>
 #include <math.h>
-#include <map>
 
 // Physical properties
 #define DIAMETER                0.0177
@@ -530,7 +529,7 @@ void execute(StateVals *vals)
     }
 
     analogWrite(FAN_PIN, vals->fan_pwm);
-    analogWrite(HOSE_PIN, vals->hose_pwm);
+    analogWrite(HOSE_PIN, 25/*vals->hose_pwm*/);
   }
   else
   {
@@ -637,11 +636,11 @@ void screen_manager(StateVals *vals)
 
   static char range_temp[11];
   static char range_rh[101];
-  static char range_v[41];
+  static char range_v[101]; //Previously 41
   static char range_st[4] = {0,0,1,1};
   
   //Rango de los cases
-  static char cases[4] = {11,101,41,4};
+  static char cases[4] = {11,101,101,4}; //3rd value prev 41
 
   static uint16_t x,y,target_temp,target_humidity,target_v;
   static char lcd_st[3][4] = {"OFF","0N "};
@@ -769,7 +768,7 @@ void screen_manager(StateVals *vals)
       default:
         break;
       }
-    sprintf(buffer, " T:%2dC  RH:%3d%%  V:%2dL/min   %c%c%c ", target_temp,target_humidity,target_v,lcd_st[target_st][0],lcd_st[target_st][1],lcd_st[target_st][2]);
+    sprintf(buffer, " T:%2dC  RH:%3d%%  V:%3dL/min  %c%c%c ", target_temp,target_humidity,target_v,lcd_st[target_st][0],lcd_st[target_st][1],lcd_st[target_st][2]);
   }
   else //Background Mode
   {
