@@ -773,8 +773,8 @@ void screen_manager(StateVals *vals)
   {
 
     //Print ACTUAL Values
-    if(vals->pwr_state) sprintf(buffer, "T:%dC  RH:%3d%%  V:%2dL/min   ON  ", (int)vals->vapor_temp, (int)vals->vapor_humidity, (int)vals->current_airflow);
-    else sprintf(buffer, "T:%dC  RH:%3d%%  V:%2dL/min   OFF ", (int)vals->vapor_temp, (int)vals->vapor_humidity, (int)vals->current_airflow);
+    if(vals->pwr_state) sprintf(buffer, "T:%dC  RH:%3d%%  V:%3d%%      ON  ", (int)vals->vapor_temp, (int)vals->vapor_humidity, (int)vals->current_airflow);
+    else sprintf(buffer, "T:%dC  RH:%3d%%  V:%3d%%      OFF ", (int)vals->vapor_temp, (int)vals->vapor_humidity, (int)vals->current_airflow);
     
     //Print Thermal resistor values
     //if(vals->pwr_state) sprintf(buffer, "T:%dC  RH:%3d%%  V:%2dL/min   ON  ", (int)vals->vapor_temp, (int)vals->vapor_humidity, (int)vals->current_airspeed);
@@ -784,7 +784,7 @@ void screen_manager(StateVals *vals)
     
   }
   if(millis()>next_jahir_screen_update)
-  {
+  { 
     lcd_buffer_write(buffer, sizeof(buffer));
     next_jahir_screen_update = millis() + 300;
   }
