@@ -40,6 +40,8 @@
 #include <RotaryEncoder.h>
 #include <ClickButton.h>
 #include <math.h>
+#include <map>
+
 // Physical properties
 #define DIAMETER                0.0177
 #define REFERENCE_RESISTANCE    100000
@@ -148,7 +150,7 @@ struct StateVals
   uint16_t adc_therm = 0;
   float them_resistance = 0;
   float duty_cycle = 0;
-  float fan_duty_cycle = 0;
+  //float fan_pwm = 0;
 }state_vals;
 
 // Objects
@@ -165,6 +167,7 @@ void read_thermistor(StateVals *vals);
 void estimate_flow(StateVals *vals);
 void control_bangbang(StateVals *vals);
 void control_PID_Fan(StateVals *vals);
+void mapped_fan_control(StateVals *vals);
 void update_pid(StateVals *vals);
 void execute(StateVals *vals);
 void read_dht(StateVals *vals);
@@ -259,7 +262,7 @@ void loop()
   if (millis() > next_pidfan_control) 
   {
     //control_PID_Fan(&state_vals, millis());
-
+    mapped_fan_control(&state_vals);
     next_pidfan_control = millis() + PID_FAN_CONTROL_DELAY;
   }
   if (millis() > next_pid_update) 
@@ -438,23 +441,30 @@ void control_PID_Fan(StateVals *vals)
     integral_error_airflow_current = integral_control(integral_array, sizeof(integral_array));
     
     //Write new Duty Cycle value    
-    vals->fan_duty_cycle = (KP_FAN * error_airflow_current + KI_FAN * integral_error_airflow_current +  KD_FAN * delta_error_airflow_current);
+    vals->fan_pwm = (KP_FAN * error_airflow_current + KI_FAN * integral_error_airflow_current +  KD_FAN * delta_error_airflow_current);
     
     //Overwrite old error values
     error_airflow_old = error_airflow_current;
     old_millis = millis();
     //delta_error_humidity_old = delta_error_humidity_current;
 
-     if (vals->fan_duty_cycle > 256)
+     if (vals->fan_pwm > 256)
      {
-        vals->fan_duty_cycle = 256;       
+        vals->fan_pwm = 256;       
      }
-     else if (vals->fan_duty_cycle < 0)
+     else if (vals->fan_pwm < 0)
      {
-        vals->fan_duty_cycle = 0;       
+        vals->fan_pwm = 0;       
      }
     
 
+}
+
+void mapped_fan_control(StateVals *vals)
+{
+  //Map target_flow (0-100%) to PWM[50,256] 
+  int val = map(vals->target_airflow, 0, 100, 50, 256);
+  vals->fan_pwm = val;//PWM value
 }
 
 void update_pid(StateVals *vals)
@@ -519,7 +529,7 @@ void execute(StateVals *vals)
       vals->plate_relay_state = false;
     }
 
-    analogWrite(FAN_PIN, vals->fan_duty_cycle);
+    analogWrite(FAN_PIN, vals->fan_pwm);
     analogWrite(HOSE_PIN, vals->hose_pwm);
   }
   else
@@ -770,7 +780,7 @@ void screen_manager(StateVals *vals)
     
     //Print Thermal resistor values
     //if(vals->pwr_state) sprintf(buffer, "T:%dC  RH:%3d%%  V:%2dL/min   ON  ", (int)vals->vapor_temp, (int)vals->vapor_humidity, (int)vals->current_airspeed);
-    /*else*/ sprintf(buffer, "Air_F:%dspd Therm:%dC  FPWM:%d St:%d ", (int)vals->current_airflow, (int)vals->current_airspeed, (int)vals->fan_duty_cycle,(int)vals->plate_relay_state);
+    /*else*/ sprintf(buffer, "Air_F:%dspd Therm:%dC  FPWM:%d St:%d ", (int)vals->current_airflow, (int)vals->current_airspeed, (int)vals->fan_pwm,(int)vals->plate_relay_state);
     
   }
   if(millis()>next_jahir_screen_update)
