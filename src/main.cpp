@@ -40,6 +40,7 @@
 #include <RotaryEncoder.h>
 #include <ClickButton.h>
 #include <math.h>
+
 // Physical properties
 #define DIAMETER                0.0177
 #define REFERENCE_RESISTANCE    100000
@@ -148,7 +149,7 @@ struct StateVals
   uint16_t adc_therm = 0;
   float them_resistance = 0;
   float duty_cycle = 0;
-  float fan_duty_cycle = 0;
+  //float fan_pwm = 0;
 }state_vals;
 
 // Objects
@@ -163,14 +164,15 @@ ClickButton button1(BUTTON, LOW, CLICKBTN_PULLUP);
 void read_flow(StateVals *vals);
 void read_thermistor(StateVals *vals);
 void estimate_flow(StateVals *vals);
-void control_bangbang(StateVals *vals,uint32_t millis);
-void control_PID_Fan(StateVals *vals,uint32_t millis);
+void control_bangbang(StateVals *vals);
+void control_PID_Fan(StateVals *vals);
+void mapped_fan_control(StateVals *vals);
 void update_pid(StateVals *vals);
 void execute(StateVals *vals);
 void read_dht(StateVals *vals);
 void read_encoder(StateVals *vals);
-void screen_manager(StateVals *vals, uint32_t millis);
-void screen_debug_manager(StateVals *vals, uint32_t millis);
+void screen_manager(StateVals *vals);
+void screen_debug_manager(StateVals *vals);
 float get_density(float temp);
 void lcd_buffer_write(char buffer[32], uint16_t sizeof_buffer);
 void beep_manager(StateVals *vals);
@@ -234,7 +236,7 @@ void loop()
     {
       beep_manager(&state_vals);
       next_beep_update = millis() + BEEP_UPDATE_DELAY;
-      if(next_beep_update < millis()) next_beep_overflow_flag = true;
+      if(next_beep_update < https://www.sodahead.com/entertainment/snoop-dogg-blazes-one-during-bmi-songwriting-panel-by-chris-talbott-associated-press/question-3513905/millis()) next_beep_overflow_flag = true;
     }
   }
   else if(millis() < next_beep_update) next_beep_overflow_flag = false;
@@ -329,9 +331,11 @@ void loop()
   {
     if (millis() > next_encoder_update) 
     {
+
       read_encoder(&state_vals);
       next_encoder_update = millis() + ENCODER_UPDATE_DELAY;
       if(next_encoder_update < millis()) next_encoder_overflow_flag = true;
+
     }
   }
   else if(millis() < next_encoder_update) next_encoder_overflow_flag = false;
@@ -401,14 +405,14 @@ void estimate_flow(StateVals *vals)
   #endif
 }
 
-void control_bangbang(StateVals *vals, uint32_t millis)
+void control_bangbang(StateVals *vals)
 {
   static float error_humidity_current;
   static float error_humidity_old;
   static float delta_error_humidity_current;
   //volatile float delta_error_humidity_old;
   //volatile float targe_humidity = 80;//vals->target_humidity;
-  static uint32_t current_step = millis%PERIODO,old_millis;
+  static uint32_t current_step = millis()%PERIODO,old_millis;
 
   
   //Enter logic if the temperature is going up
@@ -416,14 +420,14 @@ void control_bangbang(StateVals *vals, uint32_t millis)
   //{
     //Read error values
     error_humidity_current = vals->target_humidity - vals->vapor_humidity;
-    delta_error_humidity_current = (error_humidity_current - error_humidity_old)/(millis-old_millis);
+    delta_error_humidity_current = (error_humidity_current - error_humidity_old)/(millis()-old_millis);
 
     //Write new Duty Cycle value
     vals->duty_cycle = (KP_BB * error_humidity_current + KD_BB * delta_error_humidity_current);
     
     //Overwrite old error values
     error_humidity_old = error_humidity_current;
-    old_millis = millis;
+    old_millis = millis();
     //delta_error_humidity_old = delta_error_humidity_current;
 
      if (vals->duty_cycle > 100)
@@ -468,7 +472,7 @@ void control_bangbang(StateVals *vals, uint32_t millis)
 
 }
 
-void control_PID_Fan(StateVals *vals, uint32_t millis)
+void control_PID_Fan(StateVals *vals)
 {
   static float error_airflow_current;
   static float error_airflow_old;
@@ -501,33 +505,29 @@ void control_PID_Fan(StateVals *vals, uint32_t millis)
     integral_error_airflow_current = integral_control(integral_array, sizeof(integral_array));
     
     //Write new Duty Cycle value    
-    vals->fan_duty_cycle = (KP_FAN * error_airflow_current + KI_FAN * integral_error_airflow_current +  KD_FAN * delta_error_airflow_current);
+    vals->fan_pwm = (KP_FAN * error_airflow_current + KI_FAN * integral_error_airflow_current +  KD_FAN * delta_error_airflow_current);
     
     //Overwrite old error values
     error_airflow_old = error_airflow_current;
     old_millis = millis();
     //delta_error_humidity_old = delta_error_humidity_current;
 
-     if (vals->fan_duty_cycle > 256)
+     if (vals->fan_pwm > 256)
      {
-        vals->fan_duty_cycle = 256;       
+        vals->fan_pwm = 256;       
      }
-     else if (vals->fan_duty_cycle < 0)
+     else if (vals->fan_pwm < 0)
      {
-        vals->fan_duty_cycle = 0;       
+        vals->fan_pwm = 0;       
      }
-      #ifdef DEBUG
-    Serial.println("BANGBANG...");
-    #endif
-    // if (vals->plate_temp < (vals->target_humidity-PLATE_HISTERESIS))vals->plate_relay_cmd = true; // Under lower range, activate.
-    // else if (vals->plate_temp > (vals->plate_temp+PLATE_HISTERESIS))vals->plate_relay_cmd = false; // Over upper range, deactivate.
     
 
-    /*if (vals->plate_temp < (target_humidity-PLATE_HISTERESIS))vals->plate_relay_cmd = true; // Under lower range, activate.
-    else if (vals->plate_temp > (target_humidity+PLATE_HISTERESIS))vals->plate_relay_cmd = false; // Over upper range, deactivate.*/
+}
 
- 
-
+void mapped_fan_control(StateVals *vals)
+{
+  //Map target_flow (0-100%) to PWM[50,256] 
+  vals->fan_pwm = map(vals->target_airflow, 0, 100, 50, 256);
 }
 
 void update_pid(StateVals *vals)
@@ -592,8 +592,8 @@ void execute(StateVals *vals)
       vals->plate_relay_state = false;
     }
 
-    analogWrite(FAN_PIN, vals->fan_duty_cycle);
-    analogWrite(HOSE_PIN, vals->hose_pwm);
+    analogWrite(FAN_PIN, vals->fan_pwm);
+    analogWrite(HOSE_PIN, 25/*vals->hose_pwm*/);
   }
   else
   {
@@ -685,7 +685,7 @@ void read_encoder(StateVals *vals)
 }
 
 
-void screen_manager(StateVals *vals, uint32_t millis)
+void screen_manager(StateVals *vals)
 {
   #ifdef DEBUG
   Serial.println("Updating LCD...");
@@ -697,14 +697,14 @@ void screen_manager(StateVals *vals, uint32_t millis)
   
   static const char posx[4] = {4,13,4,13};
   static const char posy[4] = {0,0,1,1};
-
+ 
   static char range_temp[11];
   static char range_rh[101];
-  static char range_v[41];
+  static char range_v[101]; //Previously 41
   static char range_st[4] = {0,0,1,1};
   
   //Rango de los cases
-  static char cases[4] = {11,101,41,4};
+  static char cases[4] = {11,101,101,4}; //3rd value prev 41
 
   static uint16_t x,y,target_temp,target_humidity,target_v;
   static char lcd_st[3][4] = {"OFF","0N "};
@@ -832,24 +832,26 @@ void screen_manager(StateVals *vals, uint32_t millis)
       default:
         break;
       }
-    sprintf(buffer, " T:%2dC  RH:%3d%%  V:%2dL/min   %c%c%c ", target_temp,target_humidity,target_v,lcd_st[target_st][0],lcd_st[target_st][1],lcd_st[target_st][2]);
+    sprintf(buffer, " T:%2dC  RH:%3d%%  V:%3d%%      %c%c%c ", target_temp,target_humidity,target_v,lcd_st[target_st][0],lcd_st[target_st][1],lcd_st[target_st][2]);
   }
   else //Background Mode
   {
 
     //Print ACTUAL Values
-    //if(vals->pwr_state) sprintf(buffer, "T:%dC  RH:%3d%%  V:%2dL/min   ON  ", (int)vals->vapor_temp, (int)vals->vapor_humidity, (int)vals->current_airspeed);
-    //else sprintf(buffer, "T:%dC  RH:%3d%%  V:%2dL/min   OFF ", (int)vals->vapor_temp, (int)vals->vapor_humidity, (int)vals->current_airspeed);
+    if(vals->pwr_state) sprintf(buffer, "T:%dC  RH:%3d%%  V:%3d%%      ON  ", (int)vals->vapor_temp, (int)vals->vapor_humidity, (int)vals->current_airflow);
+    else sprintf(buffer, "T:%dC  RH:%3d%%  V:%3d%%      OFF ", (int)vals->vapor_temp, (int)vals->vapor_humidity, (int)vals->current_airflow);
     
     //Print Thermal resistor values
     //if(vals->pwr_state) sprintf(buffer, "T:%dC  RH:%3d%%  V:%2dL/min   ON  ", (int)vals->vapor_temp, (int)vals->vapor_humidity, (int)vals->current_airspeed);
-    /*else*/ sprintf(buffer, "Air_F:%dspd Therm:%dC  FPWM:%d St:%d ", (int)vals->current_airflow, (int)vals->current_airspeed, (int)vals->fan_duty_cycle,(int)vals->plate_relay_state);
+    /*else*/ 
+    //DEBUG
+    //sprintf(buffer, "Air_F:%dspd Therm:%dC  FPWM:%d St:%d ", (int)vals->current_airflow, (int)vals->current_airspeed, (int)vals->fan_pwm,(int)vals->plate_relay_state);
     
   }
-  if(millis>next_jahir_screen_update)
-  {
+  if(millis()>next_jahir_screen_update)
+  { 
     lcd_buffer_write(buffer, sizeof(buffer));
-    next_jahir_screen_update = millis + 300;
+    next_jahir_screen_update = millis() + 300;
   }
   return;
 }
