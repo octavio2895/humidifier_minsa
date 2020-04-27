@@ -236,7 +236,7 @@ void loop()
     {
       beep_manager(&state_vals);
       next_beep_update = millis() + BEEP_UPDATE_DELAY;
-      if(next_beep_update < https://www.sodahead.com/entertainment/snoop-dogg-blazes-one-during-bmi-songwriting-panel-by-chris-talbott-associated-press/question-3513905/millis()) next_beep_overflow_flag = true;
+      if(next_beep_update < millis()) next_beep_overflow_flag = true;
     }
   }
   else if(millis() < next_beep_update) next_beep_overflow_flag = false;
