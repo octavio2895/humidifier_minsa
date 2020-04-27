@@ -80,7 +80,7 @@
 #define BANGBANG_CONTROL_DELAY  100
 #define PID_FAN_CONTROL_DELAY   100
 #define PID_UPDATE_DELAY        100
-#define EXECUTE_DELAY           100
+#define EXECUTE_DELAY           10
 #define ENCODER_UPDATE_DELAY    10
 #define SCREEN_UPDATE_DELAY     10
 #define BEEP_UPDATE_DELAY       10
@@ -90,9 +90,9 @@
 #define KP_BB                   60
 #define KD_BB                   60
 #define PERIODO                 2000
-#define KP_FAN                  60
-#define KD_FAN                  60
-#define KI_FAN                  10
+#define KP_FAN                  30
+#define KD_FAN                  0//35
+#define KI_FAN                  15
 
 // Globlas
 const float zeroWindAdjustment =  .2;
@@ -178,7 +178,7 @@ void encoderButtonISR();
 void encoderISR();
 byte i2c_scanner();
 float arr_average(float *arr, uint16_t size);
-float Integral_control(float *i_control, uint16_t isize);
+float integral_control(float *i_control, uint16_t isize);
 //void lcd_buffer_write_debug(char buffer [200],uint16_t buffer_size,uint16_t view_port_init);
 
 
@@ -420,7 +420,7 @@ void control_PID_Fan(StateVals *vals, uint32_t millis)
       }
     integral_array[integral_num] = error_airflow_current*delta_time;
     integral_num++;
-    integral_error_airflow_current = Integral_control(integral_array, sizeof(integral_array));
+    integral_error_airflow_current = integral_control(integral_array, sizeof(integral_array));
     
     //Write new Duty Cycle value    
     vals->fan_duty_cycle = (KP_FAN * error_airflow_current + KI_FAN * integral_error_airflow_current +  KD_FAN * delta_error_airflow_current);
@@ -434,9 +434,9 @@ void control_PID_Fan(StateVals *vals, uint32_t millis)
      {
         vals->fan_duty_cycle = 256;       
      }
-     else if (vals->fan_duty_cycle < 50)
+     else if (vals->fan_duty_cycle < 0)
      {
-        vals->fan_duty_cycle = 50;       
+        vals->fan_duty_cycle = 0;       
      }
       #ifdef DEBUG
     Serial.println("BANGBANG...");
@@ -581,15 +581,24 @@ void read_flow(StateVals *vals)
   #endif
   float TMP_Therm_ADunits = analogRead(WIND_THERM_PIN);
   float RV_Wind_ADunits = analogRead(WIND_SPEED_PIN);
-  // float RV_Wind_Volts = (RV_Wind_ADunits *  0.0048828125);
+  float x = RV_Wind_ADunits;
+  float y = TMP_Therm_ADunits;
+  float sensor_airspeed;
+  /*// float RV_Wind_Volts = (RV_Wind_ADunits *  0.0048828125);
   float RV_Wind_Volts = (RV_Wind_ADunits *  0.0032226563);
   float zeroWind_ADunits = -0.0006 * ((float)TMP_Therm_ADunits * (float)TMP_Therm_ADunits) + 1.0727 * (float)TMP_Therm_ADunits + 47.172;
   // float zeroWind_volts = (zeroWind_ADunits * 0.0048828125) - zeroWindAdjustment;
   float zeroWind_volts = (zeroWind_ADunits * 0.0032226563) - zeroWindAdjustment;
-  float WindSpeed_mps =  pow(((RV_Wind_Volts - zeroWind_volts) / .2300) , 2.7265) / 21.97;
-  vals->current_airspeed = WindSpeed_mps;
-  vals->current_airflow = WindSpeed_mps * ((3.1415/4) * pow(DIAMETER ,2)) * 60000;
-  // vals->current_airflow = RV_Wind_ADunits;
+  float WindSpeed_mps =  pow(((RV_Wind_Volts - zeroWind_volts) / .2300) , 2.7265) / 21.97;*/
+  sensor_airspeed = 2.139572236e-5*(x*x)+2.16862434e-4*(x*y)-3.59876476e-4*(y*y)-1.678691211e-1*x+3.411792421e-1*y - 61.07186374; 
+
+  if (sensor_airspeed < 0)
+  {
+    sensor_airspeed = 0;
+  }
+  vals->current_airspeed = sensor_airspeed;
+  vals->current_airflow = vals->current_airspeed * ((3.1415/4) * pow(DIAMETER ,2)) * 60000;
+  
 }
 
 void read_encoder(StateVals *vals)
@@ -756,7 +765,8 @@ void screen_manager(StateVals *vals, uint32_t millis)
     
     //Print Thermal resistor values
     //if(vals->pwr_state) sprintf(buffer, "T:%dC  RH:%3d%%  V:%2dL/min   ON  ", (int)vals->vapor_temp, (int)vals->vapor_humidity, (int)vals->current_airspeed);
-    /*else*/ sprintf(buffer, "Air_F:%dC HUM:%d Plte_T:%d St:%d ", (int)vals->current_airflow, (int)vals->vapor_humidity, (int)vals->plate_temp,(int)vals->plate_relay_state);
+    /*else*/ sprintf(buffer, "Air_F:%dspd Therm:%dC  FPWM:%d St:%d ", (int)vals->current_airflow, (int)vals->current_airspeed, (int)vals->fan_duty_cycle,(int)vals->plate_relay_state);
+    
   }
   if(millis>next_jahir_screen_update)
   {
@@ -914,7 +924,7 @@ float arr_average(float arr[256], uint16_t size)
   return (average-7);
 }
 
-float Integral_control(float i_control[256], uint16_t isize)
+float integral_control(float i_control[256], uint16_t isize)
 {
   float sum = 0;
   float integral_error = 0;
