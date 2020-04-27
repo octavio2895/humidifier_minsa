@@ -92,7 +92,7 @@
 #define PERIODO                 2000
 #define KP_FAN                  30
 #define KD_FAN                  0//35
-#define KI_FAN                  15
+#define KI_FAN                  17
 
 // Globlas
 const float zeroWindAdjustment =  .2;
@@ -396,20 +396,20 @@ void control_PID_Fan(StateVals *vals, uint32_t millis)
   static float delta_error_airflow_current, integral_error_airflow_current;
   static uint32_t old_millis;
 
-  
+  static float delta_time  = (millis()-old_millis);
+  static uint8_t integral_num = 0;
+  static float integral_array[256];
+  static bool init = 0;
 
   //Enter logic if the temperature is going up
   //if (vals->plate_temp < (target_humidity-PLATE_HISTERESIS))
   //{
     //Read error values
     error_airflow_current = vals->target_airflow - vals->current_airflow;
-    delta_error_airflow_current = (error_airflow_current - error_airflow_old)/(millis-old_millis);
+    delta_error_airflow_current = (error_airflow_current - error_airflow_old)/(delta_time);
     
     //TODO Turn into a function - Integral limiter
-  static float delta_time  = (millis-old_millis);
-  static uint8_t integral_num = 0;
-  static float integral_array[256];
-  static bool init = 0;
+  
     if (!init)
       {
         for(int i = 0; i<(sizeof(integral_array)/sizeof(integral_array[0])); i++)
@@ -418,8 +418,7 @@ void control_PID_Fan(StateVals *vals, uint32_t millis)
         }
         init = true;
       }
-    integral_array[integral_num] = error_airflow_current*delta_time;
-    integral_num++;
+    integral_array[integral_num++] = error_airflow_current*delta_time;
     integral_error_airflow_current = integral_control(integral_array, sizeof(integral_array));
     
     //Write new Duty Cycle value    
@@ -427,7 +426,7 @@ void control_PID_Fan(StateVals *vals, uint32_t millis)
     
     //Overwrite old error values
     error_airflow_old = error_airflow_current;
-    old_millis = millis;
+    old_millis = millis();
     //delta_error_humidity_old = delta_error_humidity_current;
 
      if (vals->fan_duty_cycle > 256)
@@ -927,7 +926,6 @@ float arr_average(float arr[256], uint16_t size)
 float integral_control(float i_control[256], uint16_t isize)
 {
   float sum = 0;
-  float integral_error = 0;
   int i = 0;
   for(i; i<(isize/sizeof(float)); i++) 
   {
