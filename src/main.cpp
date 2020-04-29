@@ -93,7 +93,7 @@
 #define PERIODO                 2000
 #define KP_FAN                  30
 #define KD_FAN                  0//35
-#define KI_FAN                  17
+#define KI_FAN                  0
 
 // Globlas
 const float zeroWindAdjustment =  .2;
@@ -299,11 +299,12 @@ void loop()
     if (millis() > next_pidfan_control) 
     {
       control_PID_Fan(&state_vals);
+      //mapped_fan_control(&state_vals);
       next_pidfan_control = millis() + PID_FAN_CONTROL_DELAY;
       if(next_pidfan_control < millis()) next_pidfan_overflow_flag = true;
     }
   }
-  else if(millis() < next_pidfan_control) next_pidfan_overflow_flag = false;pid_update_overflow_flag;
+  else if(millis() < next_pidfan_control) next_pidfan_overflow_flag = false;
 
   if (!pid_update_overflow_flag)
   {
@@ -516,9 +517,9 @@ void control_PID_Fan(StateVals *vals)
      {
         vals->fan_pwm = 256;       
      }
-     else if (vals->fan_pwm < 0)
+     else if (vals->fan_pwm < 60)
      {
-        vals->fan_pwm = 0;       
+        vals->fan_pwm = 60;       
      }
     
 
@@ -542,7 +543,7 @@ void update_pid(StateVals *vals)
   float p_airflow_error = airflow_error * kpa;
 
   vals->target_plate_temp = p_humidity_error;
-  vals->fan_pwm = p_airflow_error;
+  //vals->fan_pwm = p_airflow_error;
 
 
   #ifdef DEBUG
@@ -592,7 +593,7 @@ void execute(StateVals *vals)
       vals->plate_relay_state = false;
     }
 
-    analogWrite(FAN_PIN, vals->fan_pwm);
+    analogWrite(FAN_PIN,vals->fan_pwm);
     analogWrite(HOSE_PIN, 25/*vals->hose_pwm*/);
   }
   else
@@ -838,8 +839,8 @@ void screen_manager(StateVals *vals)
   {
 
     //Print ACTUAL Values
-    if(vals->pwr_state) sprintf(buffer, "T:%dC  RH:%3d%%  V:%3d%%      ON  ", (int)vals->vapor_temp, (int)vals->vapor_humidity, (int)vals->current_airflow);
-    else sprintf(buffer, "T:%dC  RH:%3d%%  V:%3d%%      OFF ", (int)vals->vapor_temp, (int)vals->vapor_humidity, (int)vals->current_airflow);
+    if(vals->pwr_state) sprintf(buffer, "T:%dC  RH:%3d%%  V:%3dL/min  ON  ", (int)vals->vapor_temp, (int)vals->current_airflow/*vapor_humidity*/, (int)vals->fan_pwm/*vals->current_airflow*/);
+    else sprintf(buffer, "T:%dC  RH:%3d%%  V:%3dL/min  OFF ", (int)vals->vapor_temp, (int)vals->vapor_humidity, (int)vals->current_airflow);
     
     //Print Thermal resistor values
     //if(vals->pwr_state) sprintf(buffer, "T:%dC  RH:%3d%%  V:%2dL/min   ON  ", (int)vals->vapor_temp, (int)vals->vapor_humidity, (int)vals->current_airspeed);
