@@ -182,7 +182,7 @@ struct StateVals
   //float fan_pwm = 0;
   //Alarm Flags
   bool is_alarm = 0;
-  bool is_over_temp_flag = 0; // The flag is set whenever the vapor temp is getting too close to output temp.
+  bool is_over_temp_flag = 0; // The flag is set whenever the relay is turned of because of the plate temp.
   bool is_out_of_water = 0; //Check plate temp to see if there is water left.
 }state_vals;
 
@@ -277,16 +277,16 @@ byte Temperatura[] = {
   B10001,
   B01110
 };
-// byte Check[] = {
-//   B00000,
-//   B00001,
-//   B00011,
-//   B10110,
-//   B11100,
-//   B01000,
-//   B00000,
-//   B00000
-// };
+byte Grade[] = {
+  B11100,
+  B10100,
+  B11100,
+  B00000,
+  B00000,
+  B00000,
+  B00000,
+  B00000
+};
 // byte Speaker[] = {
 //   B00001,
 //   B00011,
@@ -307,16 +307,16 @@ byte Temperatura[] = {
 //   B11011,
 //   B11000
 // };
-// byte Skull[] = {
-//   B00000,
-//   B01110,
-//   B10101,
-//   B11011,
-//   B01110,
-//   B01110,
-//   B00000,
-//   B00000
-// };
+byte Skull[] = {
+  B00000,
+  B01110,
+  B10101,
+  B11011,
+  B01110,
+  B01110,
+  B00000,
+  B00000
+};
 // byte Lock[] = {
 //   B01110,
 //   B10001,
@@ -343,9 +343,11 @@ byte Temperatura[] = {
   pinMode(BUZZER_PIN, OUTPUT);
   lcd.begin(LCD_COLUMNS, LCD_ROWS, LCD_5x8DOTS);
     // Create a new characters:
-   lcd.createChar(0, Temperatura);
-   lcd.createChar(1, Water);
-    lcd.createChar(2, Heat1);
+  lcd.createChar(0, Temperatura);
+  lcd.createChar(1, Water);
+  lcd.createChar(2, Grade);
+  lcd.createChar(3, Skull);
+
   encoder.begin();
   dht.begin();
   attachInterrupt(digitalPinToInterrupt(PIN_A), encoderISR, CHANGE);
@@ -353,16 +355,7 @@ byte Temperatura[] = {
   digitalWrite(BUZZER_PIN, HIGH);
   sprintf(target->buffer, "Humidifier v1.00FABLAB-MINSA-UTP");
   lcd_buffer_write(&target_vals);
-  // lcd.setCursor(0, 1);
-  // lcd.write(byte(0));
    delay(2000);
-  // lcd.write(byte(1));
-  // delay(1000);
-  // lcd.write(byte(0));
-  // delay(1000);
-  // lcd.write(byte(1));
-  // delay(1000);
-  // lcd.write(byte(0));
   digitalWrite(BUZZER_PIN, LOW);
   sprintf(target->buffer, "PROTOTIPO  ALPHAUSO EXPERIMENTAL");
   lcd_buffer_write(&target_vals);
@@ -622,7 +615,11 @@ void control_bangbang(StateVals *vals)
     
     if (vals->vapor_humidity > vals->target_humidity || vals->plate_temp > MAX_PLATE_TEMP)
     {
-      vals->plate_relay_cmd = false;
+      vals->plate_relay_cmd = 0;
+    }
+    if (vals->plate_temp > MAX_PLATE_TEMP)
+    {
+      vals->is_over_temp_flag = 1;
     }
 
 }
@@ -766,8 +763,8 @@ void read_dht(StateVals *vals)
   Serial.println("Reading DHT...");
   #endif
   float humidity, temp;
-  //humidity = dht.readHumidity();
-  //temp = dht.readTemperature();
+  humidity = dht.readHumidity();
+  temp = dht.readTemperature();
   Serial.println(humidity);
   Serial.println(temp);
   if(isnan(humidity)||isnan(temp))
@@ -871,7 +868,7 @@ void read_encoder_button(StateVals *vals, TempTarget *target)
     vals->current_beep.beep_id++;
     vals->current_beep.beep_type=BEEP_ONCE;
   }
-  else if(button1.clicks == 2)
+  else if(button1.clicks == 2 && vals->is_main_menu)
   {
       vals->is_config_mode = 0;
       vals->is_main_menu = 0;  
@@ -1013,11 +1010,11 @@ void write_main_menu(StateVals *vals, TempTarget *target)
 {
   if(vals->pwr_state) 
   {
-    sprintf(target->buffer, "%c%2d%cC  %c:%3d%%  V:%3dL/min  ON  ", byte(0),223, byte(1), (int)vals->vapor_temp, (int)vals->current_airflow/*vapor_humidity*/, (int)vals->fan_pwm/*vals->current_airflow*/);
+    sprintf(target->buffer, "%c%2d%cC   %c%3d%%   V:%2dL/min  ON   ", byte(0),(int)vals->vapor_temp, byte(2), byte(1),(int)vals->current_airflow/*vapor_humidity*/, (int)vals->fan_pwm/*vals->current_airflow*/);
   }
   else
   {
-    sprintf(target->buffer, "%c%2d%cC  %c:%3d%%  V:%3dL/min  OFF ", byte(0),223, byte(1), (int)vals->vapor_temp, (int)vals->vapor_humidity, (int)vals->current_airflow);
+    sprintf(target->buffer, "%c%2d%cC   %c%3d%%   V:%2dL/min  OFF  ", byte(0), (int)vals->vapor_temp, byte(2), byte(1), (int)vals->vapor_humidity, (int)vals->current_airflow);
   } 
   lcd_buffer_write(&target_vals);
 }
@@ -1028,16 +1025,16 @@ void write_debug_menu(StateVals *vals, TempTarget *target)
   switch (vals->button_counter%POSIBLE_POSITIONS)
       {
       case TOP_LEFT:
-        sprintf(target->buffer, "*DEB* PWR_ST:%2d  RLY:%d  PWM:%3d", (int)vals->pwr_state, (int)vals->plate_relay_state, (int)vals->fan_pwm);
+        sprintf(target->buffer, "%c PWR_ST:%2d     RLY:%d  PWM:%3d %c", byte(3),(int)vals->pwr_state, (int)vals->plate_relay_state, (int)vals->fan_pwm,byte(3));
         break;
       case TOP_RIGHT:
-        sprintf(target->buffer, "*DEB*           *DEB*          "); //adC TERMISTOR, PWM FAN, temp plato, velocidad, overtempplat ,cuando el termistor fuerza que se apague
+        sprintf(target->buffer, "%c Flow:%2dL/min  Spd:%2d PWM:%3d %c",byte(3),(int)vals->current_airflow,(int)vals->current_airspeed,(int)vals->fan_pwm,byte(3)); // overtempplat ,cuando el termistor fuerza que se apague
         break;
       case DOWN_LEFT:
-        sprintf(target->buffer, "*DEB*           *DEB*          ");
+        sprintf(target->buffer, "%c ADC_THERM:%3d PLT_T:%2d OVR_T:%d",byte(3),(int)vals->adc_therm, (int)vals->plate_temp, (int)vals->is_over_temp_flag ); //adC TERMISTOR,  temp plato, velocidad,
         break;
       case DOWN_RIGHT:
-        sprintf(target->buffer, "*DEB*           *DEB*          ");
+        sprintf(target->buffer, "%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c",byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3));
         break;    
       }
   lcd_buffer_write(&target_vals);
@@ -1152,9 +1149,15 @@ float integral_control(float i_control[256], uint16_t isize)
 
 void alarm_manager(StateVals *vals)
 {
-  if(vals->plate_temp>MAX_PLATE_TEMP)
+  
+  if(vals->plate_temp>MAX_PLATE_TEMP+50)
   {
     vals->is_out_of_water = 1;
+    vals->is_alarm = 1;
+  }
+  else if(vals->plate_temp>MAX_PLATE_TEMP)
+  {
+    vals->is_over_temp_flag = 1;
     vals->is_alarm = 1;
   }
 
