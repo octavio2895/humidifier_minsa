@@ -40,6 +40,8 @@
 #include <RotaryEncoder.h>
 #include <ClickButton.h>
 #include <math.h>
+//#include <Adafruit_SleepyDog.h>
+#include <IWatchdog.h>
 
 // Physical properties
 #define DIAMETER                0.0177
@@ -83,7 +85,7 @@
 #define PID_UPDATE_DELAY        100
 #define EXECUTE_DELAY           10
 #define ENCODER_UPDATE_DELAY    10
-#define SCREEN_UPDATE_DELAY     10
+#define SCREEN_UPDATE_DELAY     100
 #define BEEP_UPDATE_DELAY       10
 #define BEEP_ONCE_DURATION      300
 
@@ -95,6 +97,21 @@
 #define KD_FAN                  0//35
 #define KI_FAN                  0
 
+//Cursor Locations
+#define POSIBLE_POSITIONS       4
+#define POSX1                   4
+#define POSY1                   0
+#define POSX2                   13
+#define POSY2                   0
+#define POSX3                   4
+#define POSY3                   1
+#define POSX4                   13
+#define POSY4                   1
+
+//Alarm critical values
+#define MAX_PLATE_TEMP          120
+
+
 // Globlas
 const float zeroWindAdjustment =  .2;
 uint32_t next_flow_update, next_termistor_update, next_dht_update, next_flow_estimation, next_bangbang_control, next_pidfan_control, next_pid_update, next_execute, next_encoder_update, next_screen_update, next_beep_update;
@@ -104,7 +121,6 @@ float kpa, kph;
 //char* background(uint16_t,uint16_t,uint16_t);
 uint32_t next_jahir_screen_update = 0;
 volatile uint16_t buttonCounter = 0;
-static bool debug = 0;
 
 // Structs
 
@@ -115,6 +131,14 @@ enum BeepType
   BEEP_TWICE,
   BEEP_TRRICE,
   BEEP_CONINUOS
+};
+
+enum CursorPositions
+{
+  TOP_LEFT,
+  TOP_RIGHT,
+  DOWN_LEFT,
+  DOWN_RIGHT
 };
 
 struct Beeps
@@ -144,13 +168,40 @@ struct StateVals
   bool pwr_state = 0; // Machine on or off.next_dht_update
   bool plate_relay_state = 0; // Plate on or off.
   bool plate_relay_cmd = 0;
-  bool over_temp_flag = 0; // The flag is set whenever the vapor temp is getting too close to output temp.
+  
   Beeps current_beep;
   uint16_t adc_therm = 0;
   float them_resistance = 0;
   float duty_cycle = 0;
+  
+  //Encoder Info Handlers
+  uint32_t button_counter = 0; //Controls the cursor position
+  bool is_main_menu = 1; //Controls Main menu state
+  bool is_config_mode = 0; //Controls configuration mode state
+  bool is_debug_mode = 0; //Controls debug mode
   //float fan_pwm = 0;
+  //Alarm Flags
+  bool is_alarm = 0;
+  bool is_over_temp_flag = 0; // The flag is set whenever the vapor temp is getting too close to output temp.
+  bool is_out_of_water = 0; //Check plate temp to see if there is water left.
 }state_vals;
+
+struct TempTarget
+{
+  uint16_t target_temp;
+  uint16_t target_humidity;
+  uint16_t target_v;
+  bool target_st;
+  bool is_init_encoder_position;
+  uint32_t encoder_position;
+  char buffer[32];
+  char range_temp[11];
+  char range_rh[101];
+  char range_v[101]; //Previously 41
+  char range_st[4] = {0,0,1,1};
+
+
+}target_vals;
 
 // Objects
 Thermistor* thermistor;
@@ -158,6 +209,9 @@ DHT dht(DHTPIN, DHTTYPE);
 RotaryEncoder encoder(PIN_A, PIN_B, BUTTON);
 LiquidCrystal_I2C lcd(PCF8574_ADDR_A21_A11_A01, 4, 5, 6, 16, 11, 12, 13, 14, POSITIVE);
 ClickButton button1(BUTTON, LOW, CLICKBTN_PULLUP);
+
+
+
 
 
 // Prototypes
@@ -170,23 +224,112 @@ void mapped_fan_control(StateVals *vals);
 void update_pid(StateVals *vals);
 void execute(StateVals *vals);
 void read_dht(StateVals *vals);
-void read_encoder(StateVals *vals);
-void screen_manager(StateVals *vals);
+void read_encoder_button(StateVals *vals, TempTarget *target);
+void write_main_menu(StateVals *vals, TempTarget *target);
+void write_config_menu(StateVals *vals, TempTarget *target);
+void write_debug_menu(StateVals *vals, TempTarget *target);
 void screen_debug_manager(StateVals *vals);
 float get_density(float temp);
-void lcd_buffer_write(char buffer[32], uint16_t sizeof_buffer);
+void lcd_buffer_write(TempTarget *target);
 void beep_manager(StateVals *vals);
 void encoderButtonISR();
 void encoderISR();
 byte i2c_scanner();
 float arr_average(float *arr, uint16_t size);
 float integral_control(float *i_control, uint16_t isize);
+void manage_cursor(StateVals *vals);
 //void lcd_buffer_write_debug(char buffer [200],uint16_t buffer_size,uint16_t view_port_init);
 
 
 
 void setup() 
 {
+//   //Custom Caracters
+// // Make custom characters:
+ byte Heat1[] = {
+  
+  B11011,
+  B10001,
+  B10001,
+  B00010,
+  B00010,
+  B00100,
+  B10001,
+  B11111
+};
+byte Water[] = {
+  B00100,
+  B01110,
+  B01110,
+  B11101,
+  B11101,
+  B11011,
+  B01110,
+  B00000
+};
+byte Temperatura[] = {
+  B00100,
+  B01010,
+  B01010,
+  B01010,
+  B01010,
+  B10001,
+  B10001,
+  B01110
+};
+// byte Check[] = {
+//   B00000,
+//   B00001,
+//   B00011,
+//   B10110,
+//   B11100,
+//   B01000,
+//   B00000,
+//   B00000
+// };
+// byte Speaker[] = {
+//   B00001,
+//   B00011,
+//   B01111,
+//   B01111,
+//   B01111,
+//   B00011,
+//   B00001,
+//   B00000
+// };
+// byte Sound[] = {
+//   B00001,
+//   B00011,
+//   B00101,
+//   B01001,
+//   B01001,
+//   B01011,
+//   B11011,
+//   B11000
+// };
+// byte Skull[] = {
+//   B00000,
+//   B01110,
+//   B10101,
+//   B11011,
+//   B01110,
+//   B01110,
+//   B00000,
+//   B00000
+// };
+// byte Lock[] = {
+//   B01110,
+//   B10001,
+//   B10001,
+//   B11111,
+//   B11011,
+//   B11011,
+//   B11111,
+//   B00000
+// };
+
+  
+  TempTarget *target = &target_vals;
   Serial.begin(115200);
   Serial.println("Booting up!");
   pinMode(PLATE_RELAY_PIN, OUTPUT);
@@ -199,15 +342,30 @@ void setup()
   pinMode(WIND_SPEED_PIN, INPUT_ANALOG);
   pinMode(BUZZER_PIN, OUTPUT);
   lcd.begin(LCD_COLUMNS, LCD_ROWS, LCD_5x8DOTS);
+    // Create a new characters:
+   lcd.createChar(0, Temperatura);
+   lcd.createChar(1, Water);
+    lcd.createChar(2, Heat1);
   encoder.begin();
   dht.begin();
   attachInterrupt(digitalPinToInterrupt(PIN_A), encoderISR, CHANGE);
   attachInterrupt(digitalPinToInterrupt(PIN_B), encoderISR, CHANGE);
   digitalWrite(BUZZER_PIN, HIGH);
-  lcd_buffer_write("Humidifier v0.01FABLAB-MINSA-UTP", 32);
-  delay(2000);
+  sprintf(target->buffer, "Humidifier v1.00FABLAB-MINSA-UTP");
+  lcd_buffer_write(&target_vals);
+  // lcd.setCursor(0, 1);
+  // lcd.write(byte(0));
+   delay(2000);
+  // lcd.write(byte(1));
+  // delay(1000);
+  // lcd.write(byte(0));
+  // delay(1000);
+  // lcd.write(byte(1));
+  // delay(1000);
+  // lcd.write(byte(0));
   digitalWrite(BUZZER_PIN, LOW);
-  lcd_buffer_write("PROTOTIPO  ALPHAUSO EXPERIMENTAL", 32);
+  sprintf(target->buffer, "PROTOTIPO  ALPHAUSO EXPERIMENTAL");
+  lcd_buffer_write(&target_vals);
   digitalWrite(BUZZER_PIN, HIGH);
   delay(300);
   digitalWrite(BUZZER_PIN, LOW);
@@ -219,15 +377,12 @@ void setup()
   digitalWrite(BUZZER_PIN, HIGH);
   delay(300);
   digitalWrite(BUZZER_PIN, LOW);
- /* button1.Update();
-  if(button1.clicks =! 0)
-  {
-    debug = 1;
-  }*/
+  IWatchdog.begin(4000000);
 }
 
 void loop() 
 {
+  StateVals *vals = &state_vals;
   static bool next_beep_overflow_flag = false, flow_estimate_overflow_flag = false, thermistor_update_overflow_flag = false, dht_update_overflow_flag = false, next_estimation_overflow_flag = false, next_bangbang_overflow_flag = false, next_pidfan_overflow_flag = false, pid_update_overflow_flag = false, next_execute_overflow_flag = false, next_encoder_overflow_flag = false, screen_update_overflow_flag = false;
 
   if (!next_beep_overflow_flag)
@@ -333,7 +488,7 @@ void loop()
     if (millis() > next_encoder_update) 
     {
 
-      read_encoder(&state_vals);
+      read_encoder_button(&state_vals, &target_vals);
       next_encoder_update = millis() + ENCODER_UPDATE_DELAY;
       if(next_encoder_update < millis()) next_encoder_overflow_flag = true;
 
@@ -343,22 +498,27 @@ void loop()
 
   if (!screen_update_overflow_flag)
   {
+    manage_cursor(&state_vals);
     if (millis() > next_screen_update) 
-    {
-      if(!debug)
+    {  
+      if(vals->is_main_menu)
       {
-        screen_manager(&state_vals);
+        write_main_menu(&state_vals, &target_vals);
       }
-      else
+      else if (vals->is_config_mode)
       {
-        screen_debug_manager(&state_vals);
+        write_config_menu(&state_vals, &target_vals);
+      }
+      else if (vals->is_debug_mode)
+      {
+        write_debug_menu(&state_vals, &target_vals);
       }
       next_screen_update = millis() + SCREEN_UPDATE_DELAY;
       if(next_screen_update < millis()) screen_update_overflow_flag = true;
     }
   }
   else if(millis() < next_screen_update) screen_update_overflow_flag = false;
-
+IWatchdog.reload();
 }
 
 void estimate_flow(StateVals *vals)
@@ -460,13 +620,7 @@ void control_bangbang(StateVals *vals)
     }
     
     
-    /*  if (vals->duty_cycle<1)
-    {
-      vals->plate_relay_cmd = false;
-    }*/
-  //}
-  /*else*/ 
-    if (vals->vapor_humidity > vals->target_humidity || vals->plate_temp > 130)
+    if (vals->vapor_humidity > vals->target_humidity || vals->plate_temp > MAX_PLATE_TEMP)
     {
       vals->plate_relay_cmd = false;
     }
@@ -570,13 +724,13 @@ void execute(StateVals *vals)
   #endif
   if(vals->pwr_state)
   {
-    if(vals->vapor_temp >= vals->target_temp - MIN_DELTA_T && vals->over_temp_flag == 0) // Checks if vapor temp is over nearinhose_ping temp and activates overtempflag;
+    if(vals->vapor_temp >= vals->target_temp - MIN_DELTA_T && vals->is_over_temp_flag == 0) // Checks if vapor temp is over nearinhose_ping temp and activates overtempflag;
     {
-      vals->over_temp_flag = true;
+      vals->is_over_temp_flag = true;
     }
-    else if (vals->vapor_temp < vals->target_temp - MIN_DELTA_T && vals->over_temp_flag) // Checks if vapor temp is lower than nearing temp and deactivate overtempflag
+    else if (vals->vapor_temp < vals->target_temp - MIN_DELTA_T && vals->is_over_temp_flag) // Checks if vapor temp is lower than nearing temp and deactivate overtempflag
     {
-      vals->over_temp_flag = false;
+      vals->is_over_temp_flag = false;
     }
 
     // if(!vals->over_temp_flag && vals->plate_relay_cmd)
@@ -612,8 +766,8 @@ void read_dht(StateVals *vals)
   Serial.println("Reading DHT...");
   #endif
   float humidity, temp;
-  humidity = dht.readHumidity();
-  temp = dht.readTemperature();
+  //humidity = dht.readHumidity();
+  //temp = dht.readTemperature();
   Serial.println(humidity);
   Serial.println(temp);
   if(isnan(humidity)||isnan(temp))
@@ -680,130 +834,148 @@ void read_flow(StateVals *vals)
   
 }
 
-void read_encoder(StateVals *vals)
+void read_encoder_button(StateVals *vals, TempTarget *target)
 {
-  return;
+  button1.Update();
+  if(button1.clicks == 1 && (vals->is_config_mode || vals->is_debug_mode)) 
+  {
+    vals->button_counter++;
+    target->is_init_encoder_position = 1;
+  }
+  else if(button1.clicks == -1 )
+  {
+    //Screen state machine
+    if(vals->is_main_menu)
+    {
+      vals->is_config_mode = 1;
+      vals->is_main_menu = 0;  
+      vals->button_counter = 0;
+      vals->is_debug_mode = 0;
+    }
+    else if(vals->is_config_mode)
+    {
+      vals->is_config_mode = 0;
+      vals->is_main_menu = 1;
+      vals->is_debug_mode = 0;
+      vals->target_temp = target->target_temp;
+      vals->target_humidity = target->target_humidity;
+      vals->target_airflow = target->target_v;
+      vals->pwr_state = target->target_st;
+    }
+    else if(vals->is_debug_mode)
+    {
+      vals->is_config_mode = 0;
+      vals->is_main_menu = 1;
+      vals->is_debug_mode = 0;
+    }
+    vals->current_beep.beep_id++;
+    vals->current_beep.beep_type=BEEP_ONCE;
+  }
+  else if(button1.clicks == 2)
+  {
+      vals->is_config_mode = 0;
+      vals->is_main_menu = 0;  
+      vals->is_debug_mode = 1;
+  }
 }
 
-
-void screen_manager(StateVals *vals)
+void manage_cursor(StateVals *vals)
+{
+  if(vals->is_config_mode)
+  {
+    
+    switch(vals->button_counter%POSIBLE_POSITIONS)
+    {
+      case TOP_LEFT:
+        lcd.setCursor(POSX1,POSY1);
+        break;
+      case TOP_RIGHT:
+        lcd.setCursor(POSX2,POSY2);
+        break;
+      case DOWN_LEFT:
+        lcd.setCursor(POSX3,POSY3);
+        break;
+      case DOWN_RIGHT:
+        lcd.setCursor(POSX4,POSY4);     
+        break;    
+    }
+    lcd.blink();
+  }
+  else
+  {
+    lcd.noBlink();
+  }
+  
+}
+void write_config_menu(StateVals *vals, TempTarget *target)
 {
   #ifdef DEBUG
   Serial.println("Updating LCD...");
 
   #endif
-  static bool menu;
-  static char buffer[32];
-  static const char mode1[4] = {'A','B','C','D'};
   
-  static const char posx[4] = {4,13,4,13};
-  static const char posy[4] = {0,0,1,1};
- 
-  static char range_temp[11];
-  static char range_rh[101];
-  static char range_v[101]; //Previously 41
-  static char range_st[4] = {0,0,1,1};
+  static uint32_t value_encoder;
   
   //Rango de los cases
-  static char cases[4] = {11,101,101,4}; //3rd value prev 41
+  static char cases[4] = {11,101,101,4}; //3rd value prev 41isnan
 
-  static uint16_t x,y,target_temp,target_humidity,target_v;
   static char lcd_st[3][4] = {"OFF","0N "};
-  static bool aux,target_st;
 
-  for(int i=0;i<sizeof(range_temp);i++)
+  //Define range of values for each variable
+  for(int i=0;i<sizeof(target->range_temp);i++)
   {
-    range_temp[i] = i+28;
+    target->range_temp[i] = i+28;
   }
-  for(int i=0;i<sizeof(range_rh);i++)
+  for(int i=0;i<sizeof(target->range_rh);i++)
   {
-    range_rh[i] = i;
+    target->range_rh[i] = i;
   }
-  for(int i=0;i<sizeof(range_v);i++)
+  for(int i=0;i<sizeof(target->range_v);i++)
   {
-    range_v[i] = i;
+    target->range_v[i] = i;
   }
   
-
-  //See if a click happened
-  button1.Update();
-  if(button1.clicks == 1 && menu) 
-  {
-    buttonCounter++;
-    aux=true;
-  }
-
-  //See if long click happened
-  if(button1.clicks == -1 )
-  {
-    menu = !menu;
-    if (menu)
+    if(target->is_init_encoder_position)
     {
-      vals->current_beep.beep_id++;
-      vals->current_beep.beep_type=BEEP_ONCE;
-      buttonCounter=0;
-    }
-    else
-    {
-      vals->current_beep.beep_id++;
-      vals->current_beep.beep_type=BEEP_ONCE;
-      vals->target_temp = target_temp;
-      vals->target_humidity = target_humidity;
-      vals->target_airflow = target_v;
-      vals->pwr_state = target_st;
-    }
-  }
-
-  //Print Cursor IN CONFIG MODE
-  if (menu) //Menu Mode
-  {
-    lcd.setCursor(posx[x],posy[x]);
-    lcd.blink();
-
-    //Manage Cursor
-    x = (buttonCounter)%4;
-
-    if(aux)
-    {
-      aux=false; 
-      switch (mode1[x])
+      target->is_init_encoder_position = false; 
+      switch (vals->button_counter%POSIBLE_POSITIONS)
       {
-        case 'A':
-          for(int i=0;i<=sizeof(range_temp);i++)
+        case TOP_LEFT:
+          for(int i=0;i<=sizeof(target->range_temp);i++)
           {
-            if(target_temp==range_temp[i])
+            if(target->target_temp==target->range_temp[i])
             {
-              y=i;
+              value_encoder = i;
               break;  
             }
           }
           break;
-        case 'B':
-          for(int i=0;i<=sizeof(range_rh);i++)
+        case TOP_RIGHT:
+          for(int i=0;i<=sizeof(target->range_rh);i++)
           {
-            if(target_humidity==range_rh[i])
+            if(target->target_humidity==target->range_rh[i])
             {
-              y=i;
+              value_encoder = i;
               break;  
             }
           }
           break;
-        case 'C':
-          for(int i=0;i<=sizeof(range_v);i++)
+        case DOWN_LEFT:
+          for(int i=0;i<=sizeof(target->range_v);i++)
           {
-            if(target_v==range_v[i])
+            if(target->target_v==target->range_v[i])
             {
-              y=i;
+              value_encoder = i;
               break;  
             }
           }
           break;
-        case 'D':
-        for(int i=0;i<=sizeof(range_st);i++)
+        case DOWN_RIGHT:
+        for(int i=0;i<=sizeof(target->range_st);i++)
         {
-          if(target_st==range_st[i])
+          if(target->target_st==target->range_st[i])
           {
-            y=i;
+            value_encoder = i;
             break;  
           }
         }
@@ -811,50 +983,64 @@ void screen_manager(StateVals *vals)
         default:
           break;
       }
-      encoder.setPosition((cases[x])*100+y);
+      encoder.setPosition((cases[vals->button_counter%POSIBLE_POSITIONS])*100+value_encoder);
     }
     //Handle Encoder in CONFIG MODE
-    y = ((encoder.getPosition()+2000*cases[x]))%cases[x];
+    target->encoder_position = ((encoder.getPosition()+2000*cases[vals->button_counter%POSIBLE_POSITIONS]))%cases[vals->button_counter%POSIBLE_POSITIONS];
 
-    switch (mode1[x])
+    switch (vals->button_counter%POSIBLE_POSITIONS)
       {
-      case 'A':
-        target_temp = range_temp[y];
+      case TOP_LEFT:
+        target->target_temp = target->range_temp[target->encoder_position];
         break;
-      case 'B':
-        target_humidity = range_rh[y];
+      case TOP_RIGHT:
+        target->target_humidity = target->range_rh[target->encoder_position];
         break;
-      case 'C':
-        target_v = range_v[y];
+      case DOWN_LEFT:
+        target->target_v = target->range_v[target->encoder_position];
         break;
-      case 'D':
-        target_st = range_st[y];     
+      case DOWN_RIGHT:
+        target->target_st = target->range_st[target->encoder_position];     
         break;    
-      default:
-        break;
       }
-    sprintf(buffer, " T:%2dC  RH:%3d%%  V:%3d%%      %c%c%c ", target_temp,target_humidity,target_v,lcd_st[target_st][0],lcd_st[target_st][1],lcd_st[target_st][2]);
-  }
-  else //Background Mode
-  {
+    sprintf(target->buffer, " T:%2dC  RH:%3d%%  V:%3d%%      %c%c%c ", target->target_temp,target->target_humidity,target->target_v,lcd_st[target->target_st][0],lcd_st[target->target_st][1],lcd_st[target->target_st][2]);
 
-    //Print ACTUAL Values
-    if(vals->pwr_state) sprintf(buffer, "T:%dC  RH:%3d%%  V:%3dL/min  ON  ", (int)vals->vapor_temp, (int)vals->current_airflow/*vapor_humidity*/, (int)vals->fan_pwm/*vals->current_airflow*/);
-    else sprintf(buffer, "T:%dC  RH:%3d%%  V:%3dL/min  OFF ", (int)vals->vapor_temp, (int)vals->vapor_humidity, (int)vals->current_airflow);
-    
-    //Print Thermal resistor values
-    //if(vals->pwr_state) sprintf(buffer, "T:%dC  RH:%3d%%  V:%2dL/min   ON  ", (int)vals->vapor_temp, (int)vals->vapor_humidity, (int)vals->current_airspeed);
-    /*else*/ 
-    //DEBUG
-    //sprintf(buffer, "Air_F:%dspd Therm:%dC  FPWM:%d St:%d ", (int)vals->current_airflow, (int)vals->current_airspeed, (int)vals->fan_pwm,(int)vals->plate_relay_state);
-    
+  lcd_buffer_write(&target_vals);
+
+}
+
+void write_main_menu(StateVals *vals, TempTarget *target)
+{
+  if(vals->pwr_state) 
+  {
+    sprintf(target->buffer, "%c%2d%cC  %c:%3d%%  V:%3dL/min  ON  ", byte(0),223, byte(1), (int)vals->vapor_temp, (int)vals->current_airflow/*vapor_humidity*/, (int)vals->fan_pwm/*vals->current_airflow*/);
   }
-  if(millis()>next_jahir_screen_update)
-  { 
-    lcd_buffer_write(buffer, sizeof(buffer));
-    next_jahir_screen_update = millis() + 300;
-  }
-  return;
+  else
+  {
+    sprintf(target->buffer, "%c%2d%cC  %c:%3d%%  V:%3dL/min  OFF ", byte(0),223, byte(1), (int)vals->vapor_temp, (int)vals->vapor_humidity, (int)vals->current_airflow);
+  } 
+  lcd_buffer_write(&target_vals);
+}
+
+void write_debug_menu(StateVals *vals, TempTarget *target)
+{
+
+  switch (vals->button_counter%POSIBLE_POSITIONS)
+      {
+      case TOP_LEFT:
+        sprintf(target->buffer, "*DEB* PWR_ST:%2d  RLY:%d  PWM:%3d", (int)vals->pwr_state, (int)vals->plate_relay_state, (int)vals->fan_pwm);
+        break;
+      case TOP_RIGHT:
+        sprintf(target->buffer, "*DEB*           *DEB*          "); //adC TERMISTOR, PWM FAN, temp plato, velocidad, overtempplat ,cuando el termistor fuerza que se apague
+        break;
+      case DOWN_LEFT:
+        sprintf(target->buffer, "*DEB*           *DEB*          ");
+        break;
+      case DOWN_RIGHT:
+        sprintf(target->buffer, "*DEB*           *DEB*          ");
+        break;    
+      }
+  lcd_buffer_write(&target_vals);
 }
 
 float get_density(float t)
@@ -872,99 +1058,33 @@ void encoderButtonISR()
   encoder.readPushButton(); 
 }
 
-/*void screen_debug_manager(StateVals *vals, uint32_t millis)
+void init_encoder_position()
 {
-  static char buffer[22];
-  static const char mode1[4] = {'A','B','C','D'};
-  static uint16_t y;// view_port_init;
-  float plate_temp = 0; // Current plat temperature. °C
-  float vapor_temp = 0; // Current temperature at vapor chamber. °C 
-  float est_temp = 0; // Estimated temperature after hose. °C
-  float est_humidity = 0; // Estimated humidity after hose. RH%
-  float vapor_abs_humidity = 0; // Current absolute humidity at vapor chamber. g/m3
-  float est_abs_humidity = 0; // Estimated absolute humidity after hose. g/m3
-  float target_humidity = 0; // Target plate temperature. °C
-  float current_airflow = 0; // Air volumetric flow rate. Lts/min
-  float current_airspeed = 0; // Air speed. m/s
-  uint16_t fan_pwm = 0; // Fan PWM duty cycle.
-  float vapor_humidity = 0; // Current humidity at vapor chamber. RH%
-  uint16_t hose_pwm = 0; // Hose power PWM duty cycle.
-  float target_temp = 0; // Target temperature after hose. °C
-  float target_humidity = 0; // Target relative humidity after hose. %RH
-  float target_airflow = 0; // Target air flow. Lts/min
-  bool pwr_state = 0; // Machine on or off.next_dht_update
-  bool plate_relay_state = 0; // Plate on or off.
-  bool plate_relay_cmd = 0;
-  bool over_temp_flag = 0; // The flag is set whenever the vapor temp is getting too close to output temp.
-  Beeps current_beep;
-  uint16_t adc_therm = 0;
-  float them_resistance = 0;
 
-  //Handle Encoder in Debug MODE
-  y = encoder.getPosition();
+}
 
-  if (y<0)
-  {
-    encoder.setPosition(0);
-  }
-  view_port_init = encoder.getPosition();
-
-  sprintf(buffer, "T:%dC  RH:%3d%%  V:%2dL/min   ON  ", (int)vals->plate_temp, (int)vals->vapor_temp, (int)vals->est_temp,(int)vals->est_humidity, (int)vals->vapor_abs_humidity, (int)vals->,
-                                                        (int)vals->plate_temp, (int)vals->vapor_temp, (int)vals->est_temp);
-
-
-  if(millis>next_jahir_screen_update)
-  {
-    lcd_buffer_write_debug(buffer, sizeof(buffer),view_port_init);
-    next_jahir_screen_update = millis + 300;
-  }
-  return;
-  
-}*/
-
-void lcd_buffer_write(char buffer[32], uint16_t sizeof_buffer)
+void lcd_buffer_write(TempTarget *target)
 {
   #ifdef DEBUG
   Serial.print("LCD: ");
   Serial.println(buffer);
   #endif
-  for (int i=0; i<(sizeof_buffer/sizeof(char)); i++)
+  for (int i=0; i<(sizeof(target->buffer)/sizeof(char)); i++)
   {
     if(i<16) 
     {
       lcd.setCursor(i, 0);
-      lcd.print(buffer[i]);
+      lcd.print(target->buffer[i]);
     }
     else 
     {
       lcd.setCursor(i-16,1);
-      lcd.print(buffer[i]);
+      lcd.print(target->buffer[i]);
     }
   }
   return;
 }
 
-/*void lcd_buffer_write_debug(char buffer[200], uint16_t sizeof_buffer,uint16_t view_port_init)
-{
-  #ifdef DEBUG
-  Serial.print("LCD: ");
-  Serial.println(buffer);
-  #endif
-  for (int i=0; i<(sizeof_buffer/sizeof(char)); i++)
-  {
-    if(i<16) 
-    {
-      lcd.setCursor(i, 0);
-      lcd.print(buffer[i]);
-    }
-    else 
-    {
-      lcd.setCursor(i-16,1);
-      lcd.print(buffer[i]);
-    }
-  }
-  return;
-}*/
 
 void beep_manager(StateVals *vals)
 {
@@ -983,6 +1103,20 @@ void beep_manager(StateVals *vals)
       digitalWrite(BUZZER_PIN, HIGH);
       beep_once_timeout = millis() + BEEP_ONCE_DURATION;
       prev_beep_id = current_beep.beep_id;
+    }
+
+    else if(millis()>beep_once_timeout)
+    {
+      digitalWrite(BUZZER_PIN, LOW);
+    }
+  }
+  else if (current_beep.beep_type == BEEP_TWICE)
+  {
+    if((current_beep.beep_id != prev_beep_id) && BUZZER_PIN==0)
+    {
+      digitalWrite(BUZZER_PIN, HIGH);
+      beep_once_timeout = millis() + BEEP_ONCE_DURATION;
+      prev_beep_id++;
     }
 
     else if(millis()>beep_once_timeout)
@@ -1016,7 +1150,19 @@ float integral_control(float i_control[256], uint16_t isize)
   return (sum);
 }
 
-void alarm_manager(StateVals &vals)
+void alarm_manager(StateVals *vals)
 {
+  if(vals->plate_temp>MAX_PLATE_TEMP)
+  {
+    vals->is_out_of_water = 1;
+    vals->is_alarm = 1;
+  }
+
+  if(vals->is_alarm)
+  {
+    vals->current_beep.beep_id = vals->current_beep.beep_id + 2;
+    vals->current_beep.beep_type=BEEP_TWICE;
+    vals->is_alarm = 0;
+  }
 
 }
