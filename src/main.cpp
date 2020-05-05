@@ -91,7 +91,7 @@
 #define BEEP_ONCE_DURATION      300
 
 //PID Values
-#define KP_PD_HUM               1
+#define KP_PD_HUM               3.5
 #define KD_PD_HUM               0
 #define PERIODO                 2000
 #define KP_FAN                  30
@@ -170,6 +170,7 @@ struct StateVals
   bool pwr_state = 0; // Machine on or off.next_dht_update
   bool plate_relay_state = 0; // Plate on or off.
   bool plate_relay_cmd = 0;
+  uint32_t clock = 0;
   
   Beeps current_beep;
   uint16_t adc_therm = 0;
@@ -211,9 +212,6 @@ DHT dht(DHTPIN, DHTTYPE);
 RotaryEncoder encoder(PIN_A, PIN_B, BUTTON);
 LiquidCrystal_I2C lcd(PCF8574_ADDR_A21_A11_A01, 4, 5, 6, 16, 11, 12, 13, 14, POSITIVE);
 ClickButton button1(BUTTON, LOW, CLICKBTN_PULLUP);
-
-
-
 
 
 // Prototypes
@@ -339,17 +337,21 @@ byte Skull[] = {
   digitalWrite(BUZZER_PIN, HIGH);
   sprintf(target->buffer, "Humidifier v1.00FABLAB-MINSA-UTP");
   lcd_buffer_write(&target_vals);
-   delay(2000);
+  digitalWrite(PLATE_RELAY_PIN, LOW);
+  delay(2000);
   digitalWrite(BUZZER_PIN, LOW);
   sprintf(target->buffer, "PROTOTIPO  ALPHAUSO EXPERIMENTAL");
   lcd_buffer_write(&target_vals);
   digitalWrite(BUZZER_PIN, HIGH);
+  //digitalWrite(PLATE_RELAY_PIN, HIGH);
   delay(300);
   digitalWrite(BUZZER_PIN, LOW);
+  digitalWrite(PLATE_RELAY_PIN, HIGH);
   delay(300);
   digitalWrite(BUZZER_PIN, HIGH);
   delay(300);
   digitalWrite(BUZZER_PIN, LOW);
+  digitalWrite(PLATE_RELAY_PIN, LOW);
   delay(300);
   digitalWrite(BUZZER_PIN, HIGH);
   delay(300);
@@ -419,8 +421,8 @@ void loop()
   {
     if (millis() > next_bangbang_control) 
     {
-      //control_PD_humidity(&state_vals);
-      control_SMC_temp(&state_vals);
+      control_PD_humidity(&state_vals);
+      //control_SMC_temp(&state_vals);
       next_bangbang_control = millis() + BANGBANG_CONTROL_DELAY;
       if(next_bangbang_control < millis()) next_bangbang_overflow_flag = true;
     }
@@ -549,8 +551,10 @@ void control_PD_humidity(StateVals *vals)
   static float error_humidity_current;
   static float error_humidity_old;
   static float delta_error_humidity_current;
-  static uint32_t current_step = millis()%PERIODO,old_millis;
+  float current_step = millis()%PERIODO;
+  static float old_millis;
 
+  vals->clock = current_step;
   //Read error values
   error_humidity_current = vals->target_humidity - vals->vapor_humidity;
   delta_error_humidity_current = (error_humidity_current - error_humidity_old)/(millis()-old_millis);
@@ -571,26 +575,21 @@ void control_PD_humidity(StateVals *vals)
     vals->duty_cycle = 0;       
   }
 
-  if ((current_step < ((vals->duty_cycle/100)*PERIODO)) && vals->is_over_temp_flag == 0)
+  if ((current_step < ((vals->duty_cycle/100)*PERIODO)))
   {
     vals->plate_relay_cmd = true;
   }
   else
   {
     vals->plate_relay_cmd = false;
-    vals->plate_relay_state = false;
   }
   
   
-  // if (vals->vapor_humidity > vals->target_humidity || vals->plate_temp > MAX_PLATE_TEMP)
-  // {
-  //   vals->plate_relay_cmd = 0;
-  // }
   if (vals->plate_temp > MAX_PLATE_TEMP)
   {
     vals->is_over_temp_flag = 1;
   }
-  if (vals->plate_temp <= MAX_PLATE_TEMP-20 && vals->is_over_temp_flag)
+  if (vals->plate_temp < MAX_PLATE_TEMP-20 && vals->is_over_temp_flag)
   {
     vals->is_over_temp_flag = 0;
   }
@@ -728,9 +727,7 @@ void execute(StateVals *vals)
       digitalWrite(PLATE_RELAY_PIN, LOW);
       vals->plate_relay_state = true;
     }
-
-    // if(vals->over_temp_flag || !vals->plate_relay_cmd)
-    if(!vals->plate_relay_cmd)
+    else
     {
       digitalWrite(PLATE_RELAY_PIN, HIGH);
       vals->plate_relay_state = false;
@@ -754,7 +751,7 @@ void read_dht(StateVals *vals)
   #ifdef DEBUG
   Serial.println("Reading DHT...");
   #endif
-  float humidity, temp;
+  float humidity, temp; 
   humidity = dht.readHumidity();
   temp = dht.readTemperature();
   Serial.println(humidity);
@@ -1017,7 +1014,7 @@ void write_debug_menu(StateVals *vals, TempTarget *target)
   switch (vals->button_counter%POSIBLE_POSITIONS)
       {
       case TOP_LEFT:
-        sprintf(target->buffer, "%c PWR_ST:%2d     RLY:%d  PWM:%3d %c", byte(3),(int)vals->pwr_state, (int)vals->plate_relay_state, (int)vals->fan_pwm,byte(3));
+        sprintf(target->buffer, "%c CMD:%2d  %4d   Rst:%d  DC:%3d %c", byte(3),(int)vals->plate_relay_cmd,millis()%PERIODO, (int)vals->plate_relay_state, (int)vals->duty_cycle,byte(3));
         break;
       case TOP_RIGHT:
         sprintf(target->buffer, "%c Flow:%2dL/min  Spd:%2d PWM:%3d %c",byte(3),(int)vals->current_airflow,(int)vals->current_airspeed,(int)vals->fan_pwm,byte(3)); // overtempplat ,cuando el termistor fuerza que se apague
