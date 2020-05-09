@@ -343,7 +343,6 @@ byte Skull[] = {
   sprintf(target->buffer, "PROTOTIPO  ALPHAUSO EXPERIMENTAL");
   lcd_buffer_write(&target_vals);
   digitalWrite(BUZZER_PIN, HIGH);
-  //digitalWrite(PLATE_RELAY_PIN, HIGH);
   delay(300);
   digitalWrite(BUZZER_PIN, LOW);
   digitalWrite(PLATE_RELAY_PIN, HIGH);
@@ -854,6 +853,8 @@ void read_encoder_button(StateVals *vals, TempTarget *target)
       vals->is_main_menu = 1;
       vals->is_debug_mode = 0;
     }
+    // vals->current_beep.beep_id = vals->current_beep.beep_id + 2;
+    // vals->current_beep.beep_type=BEEP_TWICE;
     vals->current_beep.beep_id++;
     vals->current_beep.beep_type=BEEP_ONCE;
   }
@@ -1070,7 +1071,6 @@ void lcd_buffer_write(TempTarget *target)
   }
   return;
 }
-
 
 void beep_manager(StateVals *vals)
 {
