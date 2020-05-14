@@ -432,8 +432,8 @@ void loop()
   {
     if (millis() > next_pidfan_control) 
     {
-      control_PID_Fan(&state_vals);
-      //mapped_fan_control(&state_vals);
+      //control_PID_Fan(&state_vals);
+      mapped_fan_control(&state_vals);
       next_pidfan_control = millis() + PID_FAN_CONTROL_DELAY;
       if(next_pidfan_control < millis()) next_pidfan_overflow_flag = true;
     }
@@ -799,9 +799,6 @@ void read_flow(StateVals *vals)
   #endif
   float TMP_Therm_ADunits = analogRead(WIND_THERM_PIN);
   float RV_Wind_ADunits = analogRead(WIND_SPEED_PIN);
-  float x = RV_Wind_ADunits;
-  float y = TMP_Therm_ADunits;
-  float sensor_airspeed;
   float RV_Wind_Volts = (RV_Wind_ADunits *  0.0048828125);/*
   float RV_Wind_Volts = (RV_Wind_ADunits *  0.0032226563);
   float zeroWind_ADunits = -0.0006 * ((float)TMP_Therm_ADunits * (float)TMP_Therm_ADunits) + 1.0727 * (float)TMP_Therm_ADunits + 47.172;
