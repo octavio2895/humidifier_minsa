@@ -239,6 +239,7 @@ byte i2c_scanner();
 float arr_average(float *arr, uint16_t size);
 float integral_control(float *i_control, uint16_t isize);
 void manage_cursor(StateVals *vals);
+void read_flow_old(StateVals *vals);
 //void lcd_buffer_write_debug(char buffer [200],uint16_t buffer_size,uint16_t view_port_init);
 
 
@@ -378,7 +379,8 @@ void loop()
   {
     if (millis() > next_flow_update) 
     {
-      read_flow(&state_vals);
+      //read_flow(&state_vals);
+      read_flow_old(&state_vals);
       next_flow_update = millis() + FLOW_UPDATE_DELAY;
       if(next_flow_update < millis()) flow_estimate_overflow_flag = true;
     }
@@ -669,7 +671,15 @@ void control_PID_Fan(StateVals *vals)
 void mapped_fan_control(StateVals *vals)
 {
   //Map target_flow (0-100%) to PWM[50,256] 
-  vals->fan_pwm = map(vals->target_airflow, 0, 100, 50, 256);
+  if(vals->pwr_state)
+  {
+    vals->fan_pwm = 0;
+  }
+  else
+  {
+    vals->fan_pwm = map(vals->target_airflow, 0, 100, 0, 256);
+  }
+  
 }
 
 void update_pid(StateVals *vals)
@@ -826,6 +836,35 @@ void read_flow(StateVals *vals)
   vals->current_airflow = aproximacion3;
   
 }
+
+void read_flow_old(StateVals *vals) 
+{
+  #ifdef DEBUG
+  Serial.println("Reading flow...");
+  #endif
+  float TMP_Therm_ADunits = analogRead(WIND_THERM_PIN);
+  float RV_Wind_ADunits = analogRead(WIND_SPEED_PIN);
+  float x = RV_Wind_ADunits;
+  float y = TMP_Therm_ADunits;
+  float sensor_airspeed;
+  /*// float RV_Wind_Volts = (RV_Wind_ADunits *  0.0048828125);
+  float RV_Wind_Volts = (RV_Wind_ADunits *  0.0032226563);
+  float zeroWind_ADunits = -0.0006 * ((float)TMP_Therm_ADunits * (float)TMP_Therm_ADunits) + 1.0727 * (float)TMP_Therm_ADunits + 47.172;
+  // float zeroWind_volts = (zeroWind_ADunits * 0.0048828125) - zeroWindAdjustment;
+  float zeroWind_volts = (zeroWind_ADunits * 0.0032226563) - zeroWindAdjustment;
+  float WindSpeed_mps =  pow(((RV_Wind_Volts - zeroWind_volts) / .2300) , 2.7265) / 21.97;*/
+  sensor_airspeed = 2.139572236e-5*(x*x)+2.16862434e-4*(x*y)-3.59876476e-4*(y*y)-1.678691211e-1*x+3.411792421e-1*y - 61.07186374; 
+
+  if (sensor_airspeed < 0)
+  {
+    sensor_airspeed = 0;
+  }
+  vals->current_airspeed = sensor_airspeed;
+  vals->current_airflow = vals->current_airspeed * ((3.1415/4) * pow(DIAMETER ,2)) * 60000;
+  
+}
+
+
 
 void read_encoder_button(StateVals *vals, TempTarget *target)
 {
