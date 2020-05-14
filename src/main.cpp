@@ -802,20 +802,31 @@ void read_flow(StateVals *vals)
   float x = RV_Wind_ADunits;
   float y = TMP_Therm_ADunits;
   float sensor_airspeed;
-  /*// float RV_Wind_Volts = (RV_Wind_ADunits *  0.0048828125);
+  float RV_Wind_Volts = (RV_Wind_ADunits *  0.0048828125);/*
   float RV_Wind_Volts = (RV_Wind_ADunits *  0.0032226563);
   float zeroWind_ADunits = -0.0006 * ((float)TMP_Therm_ADunits * (float)TMP_Therm_ADunits) + 1.0727 * (float)TMP_Therm_ADunits + 47.172;
   // float zeroWind_volts = (zeroWind_ADunits * 0.0048828125) - zeroWindAdjustment;
   float zeroWind_volts = (zeroWind_ADunits * 0.0032226563) - zeroWindAdjustment;
   float WindSpeed_mps =  pow(((RV_Wind_Volts - zeroWind_volts) / .2300) , 2.7265) / 21.97;*/
-  sensor_airspeed = 2.139572236e-5*(x*x)+2.16862434e-4*(x*y)-3.59876476e-4*(y*y)-1.678691211e-1*x+3.411792421e-1*y - 61.07186374; 
+  //sensor_airspeed = 2.139572236e-5*(x*x)+2.16862434e-4*(x*y)-3.59876476e-4*(y*y)-1.678691211e-1*x+3.411792421e-1*y - 61.07186374;
 
-  if (sensor_airspeed < 0)
+  float zeroWind_ADunits = -0.0006*((float)TMP_Therm_ADunits * (float)TMP_Therm_ADunits) + 1.0727 * (float)TMP_Therm_ADunits + 47.172;  //  13.0C  553  482.39
+
+  float zeroWind_volts = (zeroWind_ADunits * 0.0048828125) - zeroWindAdjustment;  
+
+   
+  float WindSpeed_MPH =  pow(((RV_Wind_Volts - zeroWind_volts) /.2300) , 2.7265);  
+  float windspeed_mps = WindSpeed_MPH * 0.44704;
+  float flujo = windspeed_mps * 3.1416/4 * DIAMETER;
+  float flujo_LPM = flujo * 1000 * 60;
+  float aproximacion3 = flujo_LPM * (-0.0000000019*flujo_LPM*flujo_LPM*flujo_LPM + 0.0000020091*flujo_LPM*flujo_LPM - 0.0006816921*flujo_LPM + 0.2165465814);
+
+  if (aproximacion3 < 0)
   {
-    sensor_airspeed = 0;
+    aproximacion3 = 0;
   }
-  vals->current_airspeed = sensor_airspeed;
-  vals->current_airflow = vals->current_airspeed * ((3.1415/4) * pow(DIAMETER ,2)) * 60000;
+  vals->current_airspeed = aproximacion3 / (60000*3.1416/4 * DIAMETER);
+  vals->current_airflow = aproximacion3;
   
 }
 
