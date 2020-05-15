@@ -246,7 +246,6 @@ void read_flow_old(StateVals *vals);
 
 void setup() 
 {
-//   //Custom Caracters
 // // Make custom characters:
  byte Heat1[] = {
   
@@ -310,8 +309,6 @@ byte Skull[] = {
   B00000
 };
 
-
-  
   TempTarget *target = &target_vals;
   Serial.begin(115200);
   Serial.println("Booting up!");
@@ -335,10 +332,12 @@ byte Skull[] = {
   dht.begin();
   attachInterrupt(digitalPinToInterrupt(PIN_A), encoderISR, CHANGE);
   attachInterrupt(digitalPinToInterrupt(PIN_B), encoderISR, CHANGE);
+  
+  //Boot up sequence
+  digitalWrite(PLATE_RELAY_PIN, HIGH);
   digitalWrite(BUZZER_PIN, HIGH);
   sprintf(target->buffer, "Humidifier v1.00FABLAB-MINSA-UTP");
   lcd_buffer_write(&target_vals);
-  digitalWrite(PLATE_RELAY_PIN, LOW);
   delay(2000);
   digitalWrite(BUZZER_PIN, LOW);
   sprintf(target->buffer, "PROTOTIPO  ALPHAUSO EXPERIMENTAL");
@@ -346,12 +345,10 @@ byte Skull[] = {
   digitalWrite(BUZZER_PIN, HIGH);
   delay(300);
   digitalWrite(BUZZER_PIN, LOW);
-  digitalWrite(PLATE_RELAY_PIN, HIGH);
   delay(300);
   digitalWrite(BUZZER_PIN, HIGH);
   delay(300);
   digitalWrite(BUZZER_PIN, LOW);
-  digitalWrite(PLATE_RELAY_PIN, LOW);
   delay(300);
   digitalWrite(BUZZER_PIN, HIGH);
   delay(300);
@@ -616,6 +613,7 @@ void control_SMC_temp (StateVals *vals)
   old_millis = millis();
 
 }
+
 void control_PID_Fan(StateVals *vals)
 {
   static float error_airflow_current;
@@ -671,14 +669,9 @@ void control_PID_Fan(StateVals *vals)
 void mapped_fan_control(StateVals *vals)
 {
   //Map target_flow (0-100%) to PWM[50,256] 
-  if(vals->pwr_state)
-  {
-    vals->fan_pwm = 0;
-  }
-  else
-  {
-    vals->fan_pwm = map(vals->target_airflow, 0, 100, 0, 256);
-  }
+
+  vals->fan_pwm = map(vals->target_airflow, 0, 100, 0, 256);
+ 
   
 }
 
@@ -809,8 +802,8 @@ void read_flow(StateVals *vals)
   #endif
   float TMP_Therm_ADunits = analogRead(WIND_THERM_PIN);
   float RV_Wind_ADunits = analogRead(WIND_SPEED_PIN);
-  float RV_Wind_Volts = (RV_Wind_ADunits *  0.0048828125);/*
-  float RV_Wind_Volts = (RV_Wind_ADunits *  0.0032226563);
+  //float RV_Wind_Volts = (RV_Wind_ADunits *  0.0048828125);
+  float RV_Wind_Volts = (RV_Wind_ADunits *  0.0032226563);/*
   float zeroWind_ADunits = -0.0006 * ((float)TMP_Therm_ADunits * (float)TMP_Therm_ADunits) + 1.0727 * (float)TMP_Therm_ADunits + 47.172;
   // float zeroWind_volts = (zeroWind_ADunits * 0.0048828125) - zeroWindAdjustment;
   float zeroWind_volts = (zeroWind_ADunits * 0.0032226563) - zeroWindAdjustment;
@@ -819,7 +812,7 @@ void read_flow(StateVals *vals)
 
   float zeroWind_ADunits = -0.0006*((float)TMP_Therm_ADunits * (float)TMP_Therm_ADunits) + 1.0727 * (float)TMP_Therm_ADunits + 47.172;  //  13.0C  553  482.39
 
-  float zeroWind_volts = (zeroWind_ADunits * 0.0048828125) - zeroWindAdjustment;  
+  float zeroWind_volts = (zeroWind_ADunits * 0.0032226563) - zeroWindAdjustment;  
 
    
   float WindSpeed_MPH =  pow(((RV_Wind_Volts - zeroWind_volts) /.2300) , 2.7265);  
@@ -828,12 +821,12 @@ void read_flow(StateVals *vals)
   float flujo_LPM = flujo * 1000 * 60;
   float aproximacion3 = flujo_LPM * (-0.0000000019*flujo_LPM*flujo_LPM*flujo_LPM + 0.0000020091*flujo_LPM*flujo_LPM - 0.0006816921*flujo_LPM + 0.2165465814);
 
-  if (aproximacion3 < 0)
-  {
-    aproximacion3 = 0;
-  }
+  // if (aproximacion3 < 0)
+  // {
+  //   aproximacion3 = 0;
+  // }
   vals->current_airspeed = aproximacion3 / (60000*3.1416/4 * DIAMETER);
-  vals->current_airflow = aproximacion3;
+  vals->current_airflow = flujo_LPM;//aproximacion3;
   
 }
 
@@ -863,8 +856,6 @@ void read_flow_old(StateVals *vals)
   vals->current_airflow = vals->current_airspeed * ((3.1415/4) * pow(DIAMETER ,2)) * 60000;
   
 }
-
-
 
 void read_encoder_button(StateVals *vals, TempTarget *target)
 {
@@ -941,6 +932,7 @@ void manage_cursor(StateVals *vals)
   }
   
 }
+
 void write_config_menu(StateVals *vals, TempTarget *target)
 {
   #ifdef DEBUG
