@@ -94,7 +94,7 @@
 #define KP_PD_HUM               3.5
 #define KD_PD_HUM               0
 #define PERIODO                 2000
-#define KP_FAN                  30
+#define KP_FAN                  10
 #define KD_FAN                  0//35
 #define KI_FAN                  0
 #define KP_SMC                  0.02
@@ -111,7 +111,7 @@
 #define POSY4                   1
 
 //Alarm critical values
-#define MAX_PLATE_TEMP          110
+#define MAX_PLATE_TEMP          95
 
 
 // Globlas
@@ -176,6 +176,9 @@ struct StateVals
   uint16_t adc_therm = 0;
   float them_resistance = 0;
   float duty_cycle = 0;
+
+  uint16_t adc_flow_t = 0;
+  uint16_t adc_flow_v = 0;
   
   //Encoder Info Handlers
   uint32_t button_counter = 0; //Controls the cursor position
@@ -200,7 +203,7 @@ struct TempTarget
   char buffer[32];
   char range_temp[11];
   char range_rh[101];
-  char range_v[101]; //Previously 41
+  char range_v[41]; //Previously 41
   char range_st[4] = {0,0,1,1};
 
 
@@ -431,8 +434,8 @@ void loop()
   {
     if (millis() > next_pidfan_control) 
     {
-      //control_PID_Fan(&state_vals);
-      mapped_fan_control(&state_vals);
+      control_PID_Fan(&state_vals);
+      //mapped_fan_control(&state_vals);
       next_pidfan_control = millis() + PID_FAN_CONTROL_DELAY;
       if(next_pidfan_control < millis()) next_pidfan_overflow_flag = true;
     }
@@ -573,6 +576,11 @@ void control_PD_humidity(StateVals *vals)
     vals->duty_cycle = 0;       
   }
 
+  if (vals->is_over_temp_flag)
+  {
+    vals->duty_cycle = 0;
+  }
+  
   if ((current_step < ((vals->duty_cycle/100)*PERIODO)))
   {
     vals->plate_relay_cmd = true;
@@ -582,12 +590,11 @@ void control_PD_humidity(StateVals *vals)
     vals->plate_relay_cmd = false;
   }
   
-  
   if (vals->plate_temp > MAX_PLATE_TEMP)
   {
     vals->is_over_temp_flag = 1;
   }
-  if (vals->plate_temp < MAX_PLATE_TEMP-20 && vals->is_over_temp_flag)
+  if (vals->plate_temp < MAX_PLATE_TEMP-15 && vals->is_over_temp_flag)
   {
     vals->is_over_temp_flag = 0;
   }
@@ -626,43 +633,40 @@ void control_PID_Fan(StateVals *vals)
   static float integral_array[256];
   static bool init = 0;
 
-  //Enter logic if the temperature is going up
-  //if (vals->plate_temp < (target_humidity-PLATE_HISTERESIS))
-  //{
-    //Read error values
-    error_airflow_current = vals->target_airflow - vals->current_airflow;
-    delta_error_airflow_current = (error_airflow_current - error_airflow_old)/(delta_time);
-    
-    //TODO Turn into a function - Integral limiter
+  //Read error values
+  error_airflow_current = vals->target_airflow - vals->current_airflow;
+  delta_error_airflow_current = (error_airflow_current - error_airflow_old)/(delta_time);
   
-    if (!init)
-      {
-        for(int i = 0; i<(sizeof(integral_array)/sizeof(integral_array[0])); i++)
-        {
-          integral_array[i] = 0.0;
-        }
-        init = true;
-      }
-    integral_array[integral_num++] = error_airflow_current*delta_time;
-    integral_error_airflow_current = integral_control(integral_array, sizeof(integral_array));
-    
-    //Write new Duty Cycle value    
-    vals->fan_pwm = (KP_FAN * error_airflow_current + KI_FAN * integral_error_airflow_current +  KD_FAN * delta_error_airflow_current);
-    
-    //Overwrite old error values
-    error_airflow_old = error_airflow_current;
-    old_millis = millis();
-    //delta_error_humidity_old = delta_error_humidity_current;
+  //TODO Turn into a function - Integral limiter
 
-     if (vals->fan_pwm > 256)
-     {
-        vals->fan_pwm = 256;       
-     }
-     else if (vals->fan_pwm < 60)
-     {
-        vals->fan_pwm = 60;       
-     }
-    
+  if (!init)
+    {
+      for(int i = 0; i<(sizeof(integral_array)/sizeof(integral_array[0])); i++)
+      {
+        integral_array[i] = 0.0;
+      }
+      init = true;
+    }
+  integral_array[integral_num++] = error_airflow_current*delta_time;
+  integral_error_airflow_current = integral_control(integral_array, sizeof(integral_array));
+  
+  //Write new Duty Cycle value    
+  vals->fan_pwm = (KP_FAN * error_airflow_current + KI_FAN * integral_error_airflow_current +  KD_FAN * delta_error_airflow_current);
+  
+  //Overwrite old error values>
+  error_airflow_old = error_airflow_current;
+  old_millis = millis();
+  //delta_error_humidity_old = delta_error_humidity_current;
+
+  if (vals->fan_pwm > 256)
+  {
+    vals->fan_pwm = 256;       
+  }
+  else if (vals->fan_pwm < 0)
+  {
+    vals->fan_pwm = 0;       
+  }
+  
 
 }
 
@@ -716,11 +720,11 @@ void execute(StateVals *vals)
   {
     if(vals->vapor_temp >= vals->target_temp - MIN_DELTA_T && vals->is_over_temp_flag == 0) // Checks if vapor temp is over nearinhose_ping temp and activates overtempflag;
     {
-      vals->is_over_temp_flag = true;
+      //vals->is_over_temp_flag = true;
     }
     else if (vals->vapor_temp < vals->target_temp - MIN_DELTA_T && vals->is_over_temp_flag) // Checks if vapor temp is lower than nearing temp and deactivate overtempflag
     {
-      vals->is_over_temp_flag = false;
+      //vals->is_over_temp_flag = false;
     }
 
     // if(!vals->over_temp_flag && vals->plate_relay_cmd)
@@ -812,21 +816,20 @@ void read_flow(StateVals *vals)
 
   float zeroWind_ADunits = -0.0006*((float)TMP_Therm_ADunits * (float)TMP_Therm_ADunits) + 1.0727 * (float)TMP_Therm_ADunits + 47.172;  //  13.0C  553  482.39
 
-  float zeroWind_volts = (zeroWind_ADunits * 0.0032226563) - zeroWindAdjustment;  
+  float zeroWind_volts = (zeroWind_ADunits * 0.0032226563) - (-0.32);//zeroWindAdjustment;  
 
-   
   float WindSpeed_MPH =  pow(((RV_Wind_Volts - zeroWind_volts) /.2300) , 2.7265);  
   float windspeed_mps = WindSpeed_MPH * 0.44704;
   float flujo = windspeed_mps * 3.1416/4 * DIAMETER;
   float flujo_LPM = flujo * 1000 * 60;
-  float aproximacion3 = flujo_LPM * (-0.0000000019*flujo_LPM*flujo_LPM*flujo_LPM + 0.0000020091*flujo_LPM*flujo_LPM - 0.0006816921*flujo_LPM + 0.2165465814);
+  float aproximacion3 = (flujo_LPM - 26.995)/14.859;
 
   // if (aproximacion3 < 0)
   // {
   //   aproximacion3 = 0;
   // }
   vals->current_airspeed = aproximacion3 / (60000*3.1416/4 * DIAMETER);
-  vals->current_airflow = flujo_LPM;//aproximacion3;
+  vals->current_airflow = aproximacion3;//aproximacion3;
   
 }
 
@@ -837,24 +840,41 @@ void read_flow_old(StateVals *vals)
   #endif
   float TMP_Therm_ADunits = analogRead(WIND_THERM_PIN);
   float RV_Wind_ADunits = analogRead(WIND_SPEED_PIN);
+  vals->adc_flow_t = TMP_Therm_ADunits;
+  vals->adc_flow_v = RV_Wind_ADunits;
   float x = RV_Wind_ADunits;
   float y = TMP_Therm_ADunits;
   float sensor_airspeed;
-  /*// float RV_Wind_Volts = (RV_Wind_ADunits *  0.0048828125);
-  float RV_Wind_Volts = (RV_Wind_ADunits *  0.0032226563);
-  float zeroWind_ADunits = -0.0006 * ((float)TMP_Therm_ADunits * (float)TMP_Therm_ADunits) + 1.0727 * (float)TMP_Therm_ADunits + 47.172;
-  // float zeroWind_volts = (zeroWind_ADunits * 0.0048828125) - zeroWindAdjustment;
-  float zeroWind_volts = (zeroWind_ADunits * 0.0032226563) - zeroWindAdjustment;
-  float WindSpeed_mps =  pow(((RV_Wind_Volts - zeroWind_volts) / .2300) , 2.7265) / 21.97;*/
+  
   sensor_airspeed = 2.139572236e-5*(x*x)+2.16862434e-4*(x*y)-3.59876476e-4*(y*y)-1.678691211e-1*x+3.411792421e-1*y - 61.07186374; 
 
   if (sensor_airspeed < 0)
   {
     sensor_airspeed = 0;
   }
-  vals->current_airspeed = sensor_airspeed;
+
+  static uint8_t speed_num = 0;
+  static float speed_array[2];
+  static bool is_init = 0;
+  if (!is_init)
+    {
+      for(int i = 0; i<(sizeof(speed_array)/sizeof(speed_array[0])); i++)
+      {
+        speed_array[i] = 0;
+      }
+      is_init = true;
+    }
+  speed_array[speed_num] = sensor_airspeed;
+  speed_num++; 
+
+  if (speed_num > 2)
+  {
+    speed_num = 0;
+  }
+
+  vals->current_airspeed = arr_average(speed_array, sizeof(speed_array));
   vals->current_airflow = vals->current_airspeed * ((3.1415/4) * pow(DIAMETER ,2)) * 60000;
-  
+
 }
 
 void read_encoder_button(StateVals *vals, TempTarget *target)
@@ -943,7 +963,7 @@ void write_config_menu(StateVals *vals, TempTarget *target)
   static uint32_t value_encoder;
   
   //Rango de los cases
-  static char cases[4] = {11,101,101,4}; //3rd value prev 41isnan
+  static char cases[4] = {11,101,41,4}; //3rd value prev 41isnan
 
   static char lcd_st[3][4] = {"OFF","0N "};
 
@@ -1029,7 +1049,7 @@ void write_config_menu(StateVals *vals, TempTarget *target)
         target->target_st = target->range_st[target->encoder_position];     
         break;    
       }
-    sprintf(target->buffer, " T:%2dC  RH:%3d%%  V:%3d%%      %c%c%c ", target->target_temp,target->target_humidity,target->target_v,lcd_st[target->target_st][0],lcd_st[target->target_st][1],lcd_st[target->target_st][2]);
+    sprintf(target->buffer, " T:%2dC  RH:%3d%%  V:%2dL/min  %c%c%c ", target->target_temp,target->target_humidity,target->target_v,lcd_st[target->target_st][0],lcd_st[target->target_st][1],lcd_st[target->target_st][2]);
 
   lcd_buffer_write(&target_vals);
 
@@ -1063,7 +1083,7 @@ void write_debug_menu(StateVals *vals, TempTarget *target)
         sprintf(target->buffer, "%c ADC_THERM:%3d PL_T:%2d OVR_T:%d",byte(3),(int)vals->adc_therm, (int)vals->plate_temp, (int)vals->is_over_temp_flag ); //adC TERMISTOR,  temp plato, velocidad,
         break;
       case DOWN_RIGHT:
-        sprintf(target->buffer, "%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c",byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3),byte(3));
+        sprintf(target->buffer, "%c ADC_T:%d ADC_V:%2d PWM:%3d %c",byte(3),(int)vals->adc_flow_t,(int)vals->adc_flow_v,(int)vals->fan_pwm,byte(3));
         break;    
       }
   lcd_buffer_write(&target_vals);
@@ -1185,7 +1205,7 @@ void alarm_manager(StateVals *vals)
   }
   else if(vals->plate_temp>MAX_PLATE_TEMP)
   {
-    vals->is_over_temp_flag = 1;
+    // vals->is_over_temp_flag = 1;
     vals->is_alarm = 1;
   }
 
