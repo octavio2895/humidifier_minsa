@@ -89,6 +89,7 @@
 #define SCREEN_UPDATE_DELAY     100
 #define BEEP_UPDATE_DELAY       10
 #define BEEP_ONCE_DURATION      300
+#define ALARM_UPDATE_DELAY       10
 
 //PID Values
 #define KP_PD_HUM               3.5
@@ -116,7 +117,7 @@
 
 // Globlas
 const float zeroWindAdjustment =  .2;
-uint32_t next_flow_update, next_termistor_update, next_dht_update, next_flow_estimation, next_bangbang_control, next_pidfan_control, next_pid_update, next_execute, next_encoder_update, next_screen_update, next_beep_update;
+uint32_t next_flow_update, next_termistor_update, next_dht_update, next_flow_estimation, next_bangbang_control, next_pidfan_control, next_pid_update, next_execute, next_encoder_update, next_screen_update, next_beep_update, next_alarm_update;
 float kpa, kph;
 
 //Globals raras de Jahir
@@ -209,6 +210,20 @@ struct TempTarget
 
 }target_vals;
 
+struct Alarms
+{
+  bool  is_plate_too_hot;
+  bool  is_ready_working;
+  bool  is_setting_up;
+  bool  is_in_stand_by;
+  
+  bool  is_dry;
+  bool  has_unusual_flow;
+  bool  has_sensor_fault;
+  bool  error;
+
+}les_alarms;
+
 // Objects
 Thermistor* thermistor;
 DHT dht(DHTPIN, DHTTYPE);
@@ -243,6 +258,7 @@ float arr_average(float *arr, uint16_t size);
 float integral_control(float *i_control, uint16_t isize);
 void manage_cursor(StateVals *vals);
 void read_flow_old(StateVals *vals);
+void alarm_manager(StateVals *vals, Alarms *alarm);
 //void lcd_buffer_write_debug(char buffer [200],uint16_t buffer_size,uint16_t view_port_init);
 
 
@@ -362,7 +378,8 @@ byte Skull[] = {
 void loop() 
 {
   StateVals *vals = &state_vals;
-  static bool next_beep_overflow_flag = false, flow_estimate_overflow_flag = false, thermistor_update_overflow_flag = false, dht_update_overflow_flag = false, next_estimation_overflow_flag = false, next_bangbang_overflow_flag = false, next_pidfan_overflow_flag = false, pid_update_overflow_flag = false, next_execute_overflow_flag = false, next_encoder_overflow_flag = false, screen_update_overflow_flag = false;
+  Alarms *alarm = &les_alarms;
+  static bool next_beep_overflow_flag = false, flow_estimate_overflow_flag = false, thermistor_update_overflow_flag = false, dht_update_overflow_flag = false, next_estimation_overflow_flag = false, next_bangbang_overflow_flag = false, next_pidfan_overflow_flag = false, pid_update_overflow_flag = false, next_execute_overflow_flag = false, next_encoder_overflow_flag = false, screen_update_overflow_flag = false, next_alarm_overflow_flag = false;
 
   if (!next_beep_overflow_flag)
   {
@@ -374,6 +391,17 @@ void loop()
     }
   }
   else if(millis() < next_beep_update) next_beep_overflow_flag = false;
+
+  if (!next_alarm_overflow_flag)
+  {
+    if(millis() > next_alarm_update )
+    {
+      alarm_manager(&state_vals, &les_alarms);
+      next_alarm_update = millis() + ALARM_UPDATE_DELAY;
+      if(next_alarm_update < millis()) next_alarm_overflow_flag = true;
+    }
+  }
+  else if(millis() < next_alarm_update) next_alarm_overflow_flag = false;
 
   if (!flow_estimate_overflow_flag)
   {
@@ -1195,25 +1223,38 @@ float integral_control(float i_control[256], uint16_t isize)
   return (sum);
 }
 
-void alarm_manager(StateVals *vals)
+void alarm_manager(StateVals *vals, Alarms *alarm)
 {
-  
-  if(vals->plate_temp>MAX_PLATE_TEMP+50)
+  if(vals->plate_temp>MAX_PLATE_TEMP)
   {
-    vals->is_out_of_water = 1;
-    vals->is_alarm = 1;
+    alarm->is_plate_too_hot = 1;
   }
-  else if(vals->plate_temp>MAX_PLATE_TEMP)
+  if(1)
   {
-    // vals->is_over_temp_flag = 1;
-    vals->is_alarm = 1;
+    alarm->is_ready_working = 1;
   }
-
-  if(vals->is_alarm)
+  if(1)
   {
-    vals->current_beep.beep_id = vals->current_beep.beep_id + 2;
-    vals->current_beep.beep_type=BEEP_TWICE;
-    vals->is_alarm = 0;
+    alarm->is_setting_up = 1;
   }
-
+  if(1)
+  {
+    alarm->is_in_stand_by = 1;
+  }
+    if(vals->plate_temp>MAX_PLATE_TEMP+20)
+  {
+    alarm->is_dry = 1;
+  }
+  if(1)
+  {
+    alarm->has_unusual_flow = 1;
+  }
+    if(1)
+  {
+    alarm->has_sensor_fault = 1;
+  }
+  if(1)
+  {
+    alarm->error = 1;
+  }
 }
