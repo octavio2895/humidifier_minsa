@@ -86,7 +86,7 @@
 #define PID_UPDATE_DELAY        100
 #define EXECUTE_DELAY           10
 #define ENCODER_UPDATE_DELAY    10
-#define SCREEN_UPDATE_DELAY     100
+#define SCREEN_UPDATE_DELAY     500
 #define BEEP_UPDATE_DELAY       10
 #define BEEP_ONCE_DURATION      300
 #define ALARM_UPDATE_DELAY       10
@@ -113,17 +113,13 @@
 
 //Alarm critical values
 #define MAX_PLATE_TEMP          95
+#define MAX_V                   101 _//101: mapped mode; 41: L/min mode
 
 
 // Globlas
 const float zeroWindAdjustment =  .2;
 uint32_t next_flow_update, next_termistor_update, next_dht_update, next_flow_estimation, next_bangbang_control, next_pidfan_control, next_pid_update, next_execute, next_encoder_update, next_screen_update, next_beep_update, next_alarm_update;
 float kpa, kph;
-
-//Globals raras de Jahir
-//char* background(uint16_t,uint16_t,uint16_t);
-uint32_t next_jahir_screen_update = 0;
-volatile uint16_t buttonCounter = 0;
 
 // Structs
 
@@ -204,7 +200,7 @@ struct TempTarget
   char buffer[32];
   char range_temp[11];
   char range_rh[101];
-  char range_v[41]; //Previously 41
+  char range_v[101]; //Previously 41
   char range_st[4] = {0,0,1,1};
 
 
@@ -407,8 +403,8 @@ void loop()
   {
     if (millis() > next_flow_update) 
     {
-      //read_flow(&state_vals);
-      read_flow_old(&state_vals);
+      read_flow(&state_vals);
+      //read_flow_old(&state_vals);
       next_flow_update = millis() + FLOW_UPDATE_DELAY;
       if(next_flow_update < millis()) flow_estimate_overflow_flag = true;
     }
@@ -462,8 +458,8 @@ void loop()
   {
     if (millis() > next_pidfan_control) 
     {
-      control_PID_Fan(&state_vals);
-      //mapped_fan_control(&state_vals);
+      //control_PID_Fan(&state_vals);
+      mapped_fan_control(&state_vals);
       next_pidfan_control = millis() + PID_FAN_CONTROL_DELAY;
       if(next_pidfan_control < millis()) next_pidfan_overflow_flag = true;
     }
@@ -834,30 +830,38 @@ void read_flow(StateVals *vals)
   #endif
   float TMP_Therm_ADunits = analogRead(WIND_THERM_PIN);
   float RV_Wind_ADunits = analogRead(WIND_SPEED_PIN);
-  //float RV_Wind_Volts = (RV_Wind_ADunits *  0.0048828125);
-  float RV_Wind_Volts = (RV_Wind_ADunits *  0.0032226563);/*
-  float zeroWind_ADunits = -0.0006 * ((float)TMP_Therm_ADunits * (float)TMP_Therm_ADunits) + 1.0727 * (float)TMP_Therm_ADunits + 47.172;
-  // float zeroWind_volts = (zeroWind_ADunits * 0.0048828125) - zeroWindAdjustment;
-  float zeroWind_volts = (zeroWind_ADunits * 0.0032226563) - zeroWindAdjustment;
-  float WindSpeed_mps =  pow(((RV_Wind_Volts - zeroWind_volts) / .2300) , 2.7265) / 21.97;*/
-  //sensor_airspeed = 2.139572236e-5*(x*x)+2.16862434e-4*(x*y)-3.59876476e-4*(y*y)-1.678691211e-1*x+3.411792421e-1*y - 61.07186374;
+  vals->adc_flow_t = TMP_Therm_ADunits;
+  vals->adc_flow_v = RV_Wind_ADunits;
+  float x = RV_Wind_ADunits;
+  float y = TMP_Therm_ADunits;
+  static float x_prom,y_prom,sensor_airspeed;
 
-  float zeroWind_ADunits = -0.0006*((float)TMP_Therm_ADunits * (float)TMP_Therm_ADunits) + 1.0727 * (float)TMP_Therm_ADunits + 47.172;  //  13.0C  553  482.39
 
-  float zeroWind_volts = (zeroWind_ADunits * 0.0032226563) - (-0.32);//zeroWindAdjustment;  
+  static uint8_t speed_num = 0;
+  static float x_array[10] {0,0,0,0,0,0,0,0,0,0};
+  static float y_array[10] {0,0,0,0,0,0,0,0,0,0};
+  
+  x_array[speed_num] = x;
+  y_array[speed_num] = y;
+  speed_num++; 
 
-  float WindSpeed_MPH =  pow(((RV_Wind_Volts - zeroWind_volts) /.2300) , 2.7265);  
-  float windspeed_mps = WindSpeed_MPH * 0.44704;
-  float flujo = windspeed_mps * 3.1416/4 * DIAMETER;
-  float flujo_LPM = flujo * 1000 * 60;
-  float aproximacion3 = (flujo_LPM - 26.995)/14.859;
+ 
+  if (speed_num > 10)
+  {
+    x_prom = arr_average(x_array, sizeof(x_array));
+    y_prom = arr_average(y_array, sizeof(y_array));
+    sensor_airspeed = 0.0002390451513f * x_prom*x_prom + 0.00003434332005f * y_prom*y_prom -0.1560469416f * x_prom + 0.1569474186f * y_prom - 0.0002720380695f * x_prom*y_prom + 0.08858818355f;
+    speed_num = 0;
+  }
 
-  // if (aproximacion3 < 0)
-  // {
-  //   aproximacion3 = 0;
-  // }
-  vals->current_airspeed = aproximacion3 / (60000*3.1416/4 * DIAMETER);
-  vals->current_airflow = aproximacion3;//aproximacion3;
+  
+  
+  if (sensor_airspeed <  0)
+  {
+    sensor_airspeed = 0;
+  }
+  vals->current_airspeed = sensor_airspeed;
+  vals->current_airflow = vals->current_airspeed * ((3.1415/4) * pow(DIAMETER ,2)) * 60000;
   
 }
 
@@ -991,7 +995,7 @@ void write_config_menu(StateVals *vals, TempTarget *target)
   static uint32_t value_encoder;
   
   //Rango de los cases
-  static char cases[4] = {11,101,41,4}; //3rd value prev 41isnan
+  static char cases[4] = {11,101,101,4}; //3rd value prev 41isnan
 
   static char lcd_st[3][4] = {"OFF","0N "};
 
@@ -1077,7 +1081,7 @@ void write_config_menu(StateVals *vals, TempTarget *target)
         target->target_st = target->range_st[target->encoder_position];     
         break;    
       }
-    sprintf(target->buffer, " T:%2dC  RH:%3d%%  V:%2dL/min  %c%c%c ", target->target_temp,target->target_humidity,target->target_v,lcd_st[target->target_st][0],lcd_st[target->target_st][1],lcd_st[target->target_st][2]);
+    sprintf(target->buffer, " T:%2dC  RH:%3d%%  V:%3dL/min %c%c%c ", target->target_temp,target->target_humidity,target->target_v,lcd_st[target->target_st][0],lcd_st[target->target_st][1],lcd_st[target->target_st][2]);
 
   lcd_buffer_write(&target_vals);
 
@@ -1245,7 +1249,7 @@ void alarm_manager(StateVals *vals, Alarms *alarm)
   {
     alarm->is_dry = 1;
   }
-  if(1)
+  if(vals->current_airflow > 100)
   {
     alarm->has_unusual_flow = 1;
   }
