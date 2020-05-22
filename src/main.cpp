@@ -95,10 +95,11 @@
 #define KP_PD_HUM               3.5
 #define KD_PD_HUM               0
 #define PERIODO                 2000
-#define KP_FAN                  10
+#define KP_FAN                  0
 #define KD_FAN                  0//35
-#define KI_FAN                  0
+#define KI_FAN                  0.045//0.000000000000000000000000000000000000000000000000000000000000000000000000000000000001
 #define KP_SMC                  0.02
+#define MAX_PWM_MODIFIER        500
 
 //Cursor Locations
 #define POSIBLE_POSITIONS       4
@@ -164,6 +165,7 @@ struct StateVals
   float target_temp = 0; // Target temperature after hose. °C
   float target_humidity = 0; // Target relative humidity after hose. %RH
   float target_airflow = 0; // Target air flow. Lts/min
+  uint16_t initial_target_pwm = 0; //Target PWM for flow control
   bool pwr_state = 0; // Machine on or off.next_dht_update
   bool plate_relay_state = 0; // Plate on or off.
   bool plate_relay_cmd = 0;
@@ -200,7 +202,7 @@ struct TempTarget
   char buffer[32];
   char range_temp[11];
   char range_rh[101];
-  char range_v[101]; //Previously 41
+  char range_v[41]; //Previously 41
   char range_st[4] = {0,0,1,1};
 
 
@@ -255,6 +257,7 @@ float integral_control(float *i_control, uint16_t isize);
 void manage_cursor(StateVals *vals);
 void read_flow_old(StateVals *vals);
 void alarm_manager(StateVals *vals, Alarms *alarm);
+void flow_to_PWM(StateVals *vals);
 //void lcd_buffer_write_debug(char buffer [200],uint16_t buffer_size,uint16_t view_port_init);
 
 
@@ -458,8 +461,8 @@ void loop()
   {
     if (millis() > next_pidfan_control) 
     {
-      //control_PID_Fan(&state_vals);
-      mapped_fan_control(&state_vals);
+      control_PID_Fan(&state_vals);
+      //mapped_fan_control(&state_vals);
       next_pidfan_control = millis() + PID_FAN_CONTROL_DELAY;
       if(next_pidfan_control < millis()) next_pidfan_overflow_flag = true;
     }
@@ -650,12 +653,13 @@ void control_PID_Fan(StateVals *vals)
   static float error_airflow_current;
   static float error_airflow_old;
   static float delta_error_airflow_current, integral_error_airflow_current;
-  static uint32_t old_millis;
+  static uint32_t  pwm_modifier;
 
-  static float delta_time  = (millis()-old_millis);
-  static uint8_t integral_num = 0;
-  static float integral_array[256];
+  
+  static uint8_t old_millis, integral_num = 0;
+  static float integral_array[100], old_target_flow;
   static bool init = 0;
+  static float delta_time  = (millis()-old_millis);
 
   //Read error values
   error_airflow_current = vals->target_airflow - vals->current_airflow;
@@ -671,11 +675,32 @@ void control_PID_Fan(StateVals *vals)
       }
       init = true;
     }
-  integral_array[integral_num++] = error_airflow_current*delta_time;
+  integral_array[integral_num++] = error_airflow_current*delta_time/1000;
   integral_error_airflow_current = integral_control(integral_array, sizeof(integral_array));
   
-  //Write new Duty Cycle value    
-  vals->fan_pwm = (KP_FAN * error_airflow_current + KI_FAN * integral_error_airflow_current +  KD_FAN * delta_error_airflow_current);
+  //Calculate PWM reference value and update error
+  flow_to_PWM(&state_vals);
+  old_target_flow = vals->target_airflow;
+
+  if(integral_num > 100)
+  {
+    integral_num = 0;
+  }
+
+  //Calculate PWM modifier
+  pwm_modifier = (KP_FAN * error_airflow_current + KI_FAN * integral_error_airflow_current +  KD_FAN * delta_error_airflow_current);
+  
+  // if (pwm_modifier > MAX_PWM_MODIFIER)
+  // {
+  //   pwm_modifier = MAX_PWM_MODIFIER;       
+  // }
+  // else if (pwm_modifier < -MAX_PWM_MODIFIER)
+  // {
+  //   pwm_modifier = MAX_PWM_MODIFIER;       
+  // }
+
+  //Write new PWM value    
+  vals->fan_pwm = vals->initial_target_pwm + pwm_modifier + 35;
   
   //Overwrite old error values>
   error_airflow_old = error_airflow_current;
@@ -686,12 +711,19 @@ void control_PID_Fan(StateVals *vals)
   {
     vals->fan_pwm = 256;       
   }
-  else if (vals->fan_pwm < 0)
+  else if (vals->fan_pwm < 0 || vals->target_airflow < 2)
   {
     vals->fan_pwm = 0;       
   }
   
 
+}
+
+void flow_to_PWM(StateVals *vals)
+{ 
+  float X = vals->target_airflow;
+  uint16_t raw_pwm = 0.001063518307105 * X*X*X - 0.045439480234373 * X*X + 1.69342290412888 * X + 10.8045468316241;
+  vals->initial_target_pwm = map(raw_pwm, 0, 100, 0, 256);
 }
 
 void mapped_fan_control(StateVals *vals)
@@ -850,7 +882,7 @@ void read_flow(StateVals *vals)
   {
     x_prom = arr_average(x_array, sizeof(x_array));
     y_prom = arr_average(y_array, sizeof(y_array));
-    sensor_airspeed = 0.0002390451513f * x_prom*x_prom + 0.00003434332005f * y_prom*y_prom -0.1560469416f * x_prom + 0.1569474186f * y_prom - 0.0002720380695f * x_prom*y_prom + 0.08858818355f;
+    sensor_airspeed =  1.133423908e-4f * x_prom*x_prom - 1.159148562e-4f * x_prom*y_prom -  7.96225819e-6f * y_prom*y_prom -  6.244728852e-2f * x_prom + 8.898163594e-2f * y_prom - 13.26006647;
     speed_num = 0;
   }
 
@@ -995,7 +1027,7 @@ void write_config_menu(StateVals *vals, TempTarget *target)
   static uint32_t value_encoder;
   
   //Rango de los cases
-  static char cases[4] = {11,101,101,4}; //3rd value prev 41isnan
+  static char cases[4] = {11,101,41,4}; //3rd value prev 41isnan
 
   static char lcd_st[3][4] = {"OFF","0N "};
 
@@ -1081,7 +1113,7 @@ void write_config_menu(StateVals *vals, TempTarget *target)
         target->target_st = target->range_st[target->encoder_position];     
         break;    
       }
-    sprintf(target->buffer, " T:%2dC  RH:%3d%%  V:%3dL/min %c%c%c ", target->target_temp,target->target_humidity,target->target_v,lcd_st[target->target_st][0],lcd_st[target->target_st][1],lcd_st[target->target_st][2]);
+    sprintf(target->buffer, " T:%2dC  RH:%3d%%  V:%2dL/min  %c%c%c ", target->target_temp,target->target_humidity,target->target_v,lcd_st[target->target_st][0],lcd_st[target->target_st][1],lcd_st[target->target_st][2]);
 
   lcd_buffer_write(&target_vals);
 
@@ -1109,7 +1141,7 @@ void write_debug_menu(StateVals *vals, TempTarget *target)
         sprintf(target->buffer, "%c CMD:%2d  %4d   Rst:%d  DC:%3d %c", byte(3),(int)vals->plate_relay_cmd,millis()%PERIODO, (int)vals->plate_relay_state, (int)vals->duty_cycle,byte(3));
         break;
       case TOP_RIGHT:
-        sprintf(target->buffer, "%c Flow:%2dL/min  Spd:%2d PWM:%3d %c",byte(3),(int)vals->current_airflow,(int)vals->current_airspeed,(int)vals->fan_pwm,byte(3)); // overtempplat ,cuando el termistor fuerza que se apague
+        sprintf(target->buffer, "%c Flow:%2dL/min rPWM:%3d PWM:%3d%c",byte(3),(int)vals->current_airflow,(int)vals->initial_target_pwm,(int)vals->fan_pwm,byte(3)); // overtempplat ,cuando el termistor fuerza que se apague
         break;
       case DOWN_LEFT:
         sprintf(target->buffer, "%c ADC_THERM:%3d PL_T:%2d OVR_T:%d",byte(3),(int)vals->adc_therm, (int)vals->plate_temp, (int)vals->is_over_temp_flag ); //adC TERMISTOR,  temp plato, velocidad,
