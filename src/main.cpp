@@ -77,12 +77,12 @@
 // #define DEBUG
 
 // Timming
-#define FLOW_UPDATE_DELAY       100
+#define FLOW_UPDATE_DELAY       10
 #define TERMISTOR_UPDATE_DELAY  10
 #define DHT_UPDATE_DELAY        2005
 #define FLOW_ESTIMATION_DELAY   100
 #define BANGBANG_CONTROL_DELAY  100
-#define PID_FAN_CONTROL_DELAY   100
+#define PID_FAN_CONTROL_DELAY   10
 #define PID_UPDATE_DELAY        100
 #define EXECUTE_DELAY           10
 #define ENCODER_UPDATE_DELAY    10
@@ -97,7 +97,7 @@
 #define PERIODO                 2000
 #define KP_FAN                  0
 #define KD_FAN                  0//35
-#define KI_FAN                  0.045//0.000000000000000000000000000000000000000000000000000000000000000000000000000000000001
+#define KI_FAN                  0.05//0.000000000000000000000000000000000000000000000000000000000000000000000000000000000001
 #define KP_SMC                  0.02
 #define MAX_PWM_MODIFIER        500
 
@@ -653,12 +653,12 @@ void control_PID_Fan(StateVals *vals)
   static float error_airflow_current;
   static float error_airflow_old;
   static float delta_error_airflow_current, integral_error_airflow_current;
-  static uint32_t  pwm_modifier;
+  static uint32_t  pwm_modifier, pwm_const;
 
   
-  static uint8_t old_millis, integral_num = 0;
-  static float integral_array[100], old_target_flow;
-  static bool init = 0;
+  static uint16_t old_millis, integral_num = 0;
+  static float integral_array[250], old_target_flow;
+  static bool init = 0, pwm_bool = 0;
   static float delta_time  = (millis()-old_millis);
 
   //Read error values
@@ -682,7 +682,7 @@ void control_PID_Fan(StateVals *vals)
   flow_to_PWM(&state_vals);
   old_target_flow = vals->target_airflow;
 
-  if(integral_num > 100)
+  if(integral_num > 250)
   {
     integral_num = 0;
   }
@@ -700,8 +700,22 @@ void control_PID_Fan(StateVals *vals)
   // }
 
   //Write new PWM value    
-  vals->fan_pwm = vals->initial_target_pwm + pwm_modifier + 35;
+  vals->fan_pwm = vals->initial_target_pwm + pwm_modifier + 0.0717105 * vals->initial_target_pwm * vals->initial_target_pwm - 7.6985326 * vals->initial_target_pwm + 254.516;
   
+  if (error_airflow_current < 1.5 && error_airflow_current > -1.5 && !pwm_bool)
+  {
+    pwm_const = vals->fan_pwm;
+    pwm_bool = 1;
+  }
+  else if (error_airflow_current > 1.5 || error_airflow_current < -1.5)
+  {
+    pwm_bool = 0;
+  }
+  
+  if (pwm_bool)
+  {
+    vals->fan_pwm = pwm_const;
+  }
   //Overwrite old error values>
   error_airflow_old = error_airflow_current;
   old_millis = millis();
