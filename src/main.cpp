@@ -82,7 +82,7 @@
 #define DHT_UPDATE_DELAY        2005
 #define FLOW_ESTIMATION_DELAY   100
 #define BANGBANG_CONTROL_DELAY  100
-#define PID_FAN_CONTROL_DELAY   10
+#define PID_FAN_CONTROL_DELAY   50
 #define PID_UPDATE_DELAY        100
 #define EXECUTE_DELAY           10
 #define ENCODER_UPDATE_DELAY    10
@@ -97,7 +97,7 @@
 #define PERIODO                 2000
 #define KP_FAN                  0
 #define KD_FAN                  0//35
-#define KI_FAN                  0.05//0.000000000000000000000000000000000000000000000000000000000000000000000000000000000001
+#define KI_FAN                  0.04//0.000000000000000000000000000000000000000000000000000000000000000000000000000000000001
 #define KP_SMC                  0.02
 #define MAX_PWM_MODIFIER        500
 
@@ -113,7 +113,7 @@
 #define POSY4                   1
 
 //Alarm critical values
-#define MAX_PLATE_TEMP          95
+#define MAX_PLATE_TEMP          120
 #define MAX_V                   101 _//101: mapped mode; 41: L/min mode
 
 
@@ -594,9 +594,9 @@ void control_PD_humidity(StateVals *vals)
   error_humidity_old = error_humidity_current;
   old_millis = millis();
 
-  if (vals->duty_cycle > 50)
+  if (vals->duty_cycle > 30)
   {
-    vals->duty_cycle = 50;       
+    vals->duty_cycle = 30;       
   }
   else if (vals->duty_cycle < 0)
   {
