@@ -187,6 +187,7 @@ struct StateVals
   //float fan_pwm = 0;
   //Alarm Flags
   bool is_alarm = 0;
+  bool is_vapor_too_hot = 0;
   bool is_over_temp_flag = 0; // The flag is set whenever the relay is turned of because of the plate temp.
   bool is_out_of_water = 0; //Check plate temp to see if there is water left.
 }state_vals;
@@ -700,7 +701,7 @@ void control_PID_Fan(StateVals *vals)
   // }
 
   //Write new PWM value    
-  vals->fan_pwm = vals->initial_target_pwm + pwm_modifier + 0.0717105 * vals->initial_target_pwm * vals->initial_target_pwm - 7.6985326 * vals->initial_target_pwm + 254.516;
+  vals->fan_pwm = vals->initial_target_pwm + pwm_modifier + 0.0717105 * vals->initial_target_pwm * vals->initial_target_pwm - 7.6985326 * vals->initial_target_pwm + 230.516;
   
   if (error_airflow_current < 1.5 && error_airflow_current > -1.5 && !pwm_bool)
   {
@@ -788,17 +789,17 @@ void execute(StateVals *vals)
   #endif
   if(vals->pwr_state)
   {
-    if(vals->vapor_temp >= vals->target_temp - MIN_DELTA_T && vals->is_over_temp_flag == 0) // Checks if vapor temp is over nearinhose_ping temp and activates overtempflag;
+    if(vals->vapor_temp >= vals->target_temp)
     {
-      //vals->is_over_temp_flag = true;
-    }
-    else if (vals->vapor_temp < vals->target_temp - MIN_DELTA_T && vals->is_over_temp_flag) // Checks if vapor temp is lower than nearing temp and deactivate overtempflag
+      vals->is_vapor_too_hot = 1;
+    } 
+    else
     {
-      //vals->is_over_temp_flag = false;
+      vals->is_vapor_too_hot = 0;
     }
+    
 
-    // if(!vals->over_temp_flag && vals->plate_relay_cmd)
-    if(vals->plate_relay_cmd)
+    if(vals->plate_relay_cmd && !vals->is_vapor_too_hot)
     {
       digitalWrite(PLATE_RELAY_PIN, LOW);
       vals->plate_relay_state = true;
