@@ -96,8 +96,8 @@
 #define KD_PD_HUM               0
 #define PERIODO                 2000
 #define KP_FAN                  0
-#define KD_FAN                  0//35
-#define KI_FAN                  0.04//0.000000000000000000000000000000000000000000000000000000000000000000000000000000000001
+#define KD_FAN                  0
+#define KI_FAN                  0.04
 #define KP_SMC                  0.02
 #define MAX_PWM_MODIFIER        500
 
@@ -113,7 +113,7 @@
 #define POSY4                   1
 
 //Alarm critical values
-#define MAX_PLATE_TEMP          120
+#define MAX_PLATE_TEMP          100
 #define MAX_V                   101 _//101: mapped mode; 41: L/min mode
 
 
@@ -128,9 +128,9 @@ enum BeepType
 {
   NO_BEEP,
   BEEP_ONCE,
-  BEEP_TWICE,
-  BEEP_TRRICE,
-  BEEP_CONINUOS
+  BEEP_TWICE = 3,
+  BEEP_THRICE = 5,
+  BEEP_CONTINUOS = 400
 };
 
 enum CursorPositions
@@ -146,6 +146,7 @@ struct Beeps
   BeepType beep_type = NO_BEEP;
   uint16_t beep_priority = 0;
   uint16_t beep_id = 0;
+  uint8_t beep_clock = 0;
 };
 
 struct StateVals
@@ -658,7 +659,7 @@ void control_PID_Fan(StateVals *vals)
 
   
   static uint16_t old_millis, integral_num = 0;
-  static float integral_array[250], old_target_flow;
+  static float integral_array[180], old_target_flow;
   static bool init = 0, pwm_bool = 0;
   static float delta_time  = (millis()-old_millis);
 
@@ -683,7 +684,7 @@ void control_PID_Fan(StateVals *vals)
   flow_to_PWM(&state_vals);
   old_target_flow = vals->target_airflow;
 
-  if(integral_num > 250)
+  if(integral_num > 180)
   {
     integral_num = 0;
   }
@@ -994,12 +995,16 @@ void read_encoder_button(StateVals *vals, TempTarget *target)
     // vals->current_beep.beep_type=BEEP_TWICE;
     vals->current_beep.beep_id++;
     vals->current_beep.beep_type=BEEP_ONCE;
+    vals->current_beep.beep_clock = vals->current_beep.beep_type;
   }
   else if(button1.clicks == 2 && vals->is_main_menu)
   {
-      vals->is_config_mode = 0;
-      vals->is_main_menu = 0;  
-      vals->is_debug_mode = 1;
+    vals->is_config_mode = 0;
+    vals->is_main_menu = 0;  
+    vals->is_debug_mode = 1;
+    vals->current_beep.beep_id++;
+    vals->current_beep.beep_type=BEEP_CONTINUOS;
+    vals->current_beep.beep_clock = vals->current_beep.beep_type;
   }
 }
 
@@ -1153,7 +1158,7 @@ void write_debug_menu(StateVals *vals, TempTarget *target)
   switch (vals->button_counter%POSIBLE_POSITIONS)
       {
       case TOP_LEFT:
-        sprintf(target->buffer, "%c CMD:%2d  %4d   Rst:%d  DC:%3d %c", byte(3),(int)vals->plate_relay_cmd,millis()%PERIODO, (int)vals->plate_relay_state, (int)vals->duty_cycle,byte(3));
+        sprintf(target->buffer, "%c CMD:%2d  %4d   Clk:%d  DC:%3d %c", byte(3),(int)vals->plate_relay_cmd,millis()%PERIODO, (int)vals->current_beep.beep_clock, (int)vals->duty_cycle,byte(3));
         break;
       case TOP_RIGHT:
         sprintf(target->buffer, "%c Flow:%2dL/min rPWM:%3d PWM:%3d%c",byte(3),(int)vals->current_airflow,(int)vals->initial_target_pwm,(int)vals->fan_pwm,byte(3)); // overtempplat ,cuando el termistor fuerza que se apague
@@ -1234,18 +1239,29 @@ void beep_manager(StateVals *vals)
       digitalWrite(BUZZER_PIN, LOW);
     }
   }
-  else if (current_beep.beep_type == BEEP_TWICE)
+  else
   {
-    if((current_beep.beep_id != prev_beep_id) && BUZZER_PIN==0)
+    if((current_beep.beep_id != prev_beep_id) && millis()>beep_once_timeout)
     {
-      digitalWrite(BUZZER_PIN, HIGH);
-      beep_once_timeout = millis() + BEEP_ONCE_DURATION;
-      prev_beep_id++;
-    }
+      if(current_beep.beep_clock%2 == 1)
+      {
+        digitalWrite(BUZZER_PIN, HIGH);
+      }
+      else
+      {
+        digitalWrite(BUZZER_PIN, LOW);
+      }
 
-    else if(millis()>beep_once_timeout)
-    {
-      digitalWrite(BUZZER_PIN, LOW);
+      //beep_timeout = millis() + BEEP_ONCE_DURATION*current_beep.beep_type;
+      if (current_beep.beep_clock > 0)
+      {
+        vals->current_beep.beep_clock--;
+        beep_once_timeout = millis() + BEEP_ONCE_DURATION;
+      }
+      else
+      {
+        prev_beep_id = current_beep.beep_id;
+      }
     }
   }
 }
