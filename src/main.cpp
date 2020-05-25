@@ -130,7 +130,7 @@ enum BeepType
   BEEP_ONCE,
   BEEP_TWICE = 3,
   BEEP_THRICE = 5,
-  BEEP_CONTINUOS = 400
+  BEEP_CONTINUOS = 7
 };
 
 enum CursorPositions
@@ -1220,48 +1220,18 @@ void beep_manager(StateVals *vals)
   Beeps current_beep = vals->current_beep;
   static uint16_t prev_beep_id;
   static uint32_t beep_once_timeout;
-  if(current_beep.beep_type == NO_BEEP && current_beep.beep_id != prev_beep_id)
+
+if((current_beep.beep_id != prev_beep_id) && millis()>beep_once_timeout)
   {
-    digitalWrite(BUZZER_PIN, LOW);
-    prev_beep_id = current_beep.beep_id;
-  }
-  else if (current_beep.beep_type == BEEP_ONCE)
-  {
-    if(current_beep.beep_id != prev_beep_id)
+    digitalWrite(BUZZER_PIN, current_beep.beep_clock%2);
+    if (current_beep.beep_clock > 0)
     {
-      digitalWrite(BUZZER_PIN, HIGH);
+      vals->current_beep.beep_clock--;
       beep_once_timeout = millis() + BEEP_ONCE_DURATION;
+    }
+    else
+    {
       prev_beep_id = current_beep.beep_id;
-    }
-
-    else if(millis()>beep_once_timeout)
-    {
-      digitalWrite(BUZZER_PIN, LOW);
-    }
-  }
-  else
-  {
-    if((current_beep.beep_id != prev_beep_id) && millis()>beep_once_timeout)
-    {
-      if(current_beep.beep_clock%2 == 1)
-      {
-        digitalWrite(BUZZER_PIN, HIGH);
-      }
-      else
-      {
-        digitalWrite(BUZZER_PIN, LOW);
-      }
-
-      //beep_timeout = millis() + BEEP_ONCE_DURATION*current_beep.beep_type;
-      if (current_beep.beep_clock > 0)
-      {
-        vals->current_beep.beep_clock--;
-        beep_once_timeout = millis() + BEEP_ONCE_DURATION;
-      }
-      else
-      {
-        prev_beep_id = current_beep.beep_id;
-      }
     }
   }
 }
