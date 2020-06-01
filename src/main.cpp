@@ -251,6 +251,7 @@ void screen_debug_manager(StateVals *vals);
 float get_density(float temp);
 void lcd_buffer_write(TempTarget *target);
 void beep_manager(StateVals *vals);
+void beep_creator(StateVals *vals, BeepType);
 void encoderButtonISR();
 void encoderISR();
 byte i2c_scanner();
@@ -260,6 +261,7 @@ void manage_cursor(StateVals *vals);
 void read_flow_old(StateVals *vals);
 void alarm_manager(StateVals *vals, Alarms *alarm);
 void flow_to_PWM(StateVals *vals);
+
 //void lcd_buffer_write_debug(char buffer [200],uint16_t buffer_size,uint16_t view_port_init);
 
 
@@ -452,7 +454,7 @@ void loop()
     if (millis() > next_bangbang_control) 
     {
       control_PD_humidity(&state_vals);
-      //control_SMC_temp(&state_vals);
+      control_SMC_temp(&state_vals);
       next_bangbang_control = millis() + BANGBANG_CONTROL_DELAY;
       if(next_bangbang_control < millis()) next_bangbang_overflow_flag = true;
     }
@@ -596,9 +598,9 @@ void control_PD_humidity(StateVals *vals)
   error_humidity_old = error_humidity_current;
   old_millis = millis();
 
-  if (vals->duty_cycle > 30)
+  if (vals->duty_cycle > 50)
   {
-    vals->duty_cycle = 30;       
+    vals->duty_cycle = 50;       
   }
   else if (vals->duty_cycle < 0)
   {
@@ -610,6 +612,53 @@ void control_PD_humidity(StateVals *vals)
     vals->duty_cycle = 0;
   }
   
+  // if ((current_step < ((vals->duty_cycle/100)*PERIODO)))
+  // {
+  //   vals->plate_relay_cmd = true;
+  // }
+  // else
+  // {
+  //   vals->plate_relay_cmd = false;
+  // }
+  // //TODO: Make it a different function
+  // if (vals->plate_temp > MAX_PLATE_TEMP)
+  // {
+  //   vals->is_over_temp_flag = 1;
+  // }
+  // if (vals->plate_temp < MAX_PLATE_TEMP-15 && vals->is_over_temp_flag)
+  // {
+  //   vals->is_over_temp_flag = 0;
+  // }
+
+}
+
+void control_SMC_temp (StateVals *vals)
+{
+  static float temp_old, old_millis,current_millis,pendiente,error_temp;
+  float current_step = millis()%PERIODO;
+  current_millis = millis();
+  pendiente = (vals->plate_temp-temp_old)/(current_millis-old_millis);
+  error_temp = vals->target_humidity - vals->plate_temp;
+
+    
+  if(pendiente < KP_SMC*error_temp)
+  {
+    //vals->plate_relay_cmd = 1;
+    //vals->duty_cycle = 30;
+  }
+  else
+  {
+    //vals->plate_relay_cmd = 0;
+    vals->duty_cycle = 0;
+  }
+  old_millis = millis();
+  temp_old = vals->plate_temp;
+
+  if (vals->is_over_temp_flag)
+  {
+    vals->duty_cycle = 0;
+  }
+  //TODO: Make it a different function
   if ((current_step < ((vals->duty_cycle/100)*PERIODO)))
   {
     vals->plate_relay_cmd = true;
@@ -618,7 +667,9 @@ void control_PD_humidity(StateVals *vals)
   {
     vals->plate_relay_cmd = false;
   }
-  
+
+
+  //TODO: Make it a different function
   if (vals->plate_temp > MAX_PLATE_TEMP)
   {
     vals->is_over_temp_flag = 1;
@@ -628,25 +679,6 @@ void control_PD_humidity(StateVals *vals)
     vals->is_over_temp_flag = 0;
   }
 
-}
-
-void control_SMC_temp (StateVals *vals)
-{
-  static float temp_old, old_millis,current_millis,pendiente,error_temp;
-
-  current_millis = millis();
-  pendiente = (vals->plate_temp-temp_old)/(current_millis-old_millis);
-  error_temp = HUMIDITY_TEMP - vals->plate_temp;
-
-  if(pendiente < KP_SMC*error_temp)
-  {
-    vals->plate_relay_cmd = 1;
-  }
-  else
-  {
-    vals->plate_relay_cmd = 0;
-  }
-  old_millis = millis();
 
 }
 
@@ -991,11 +1023,10 @@ void read_encoder_button(StateVals *vals, TempTarget *target)
       vals->is_main_menu = 1;
       vals->is_debug_mode = 0;
     }
-    // vals->current_beep.beep_id = vals->current_beep.beep_id + 2;
-    // vals->current_beep.beep_type=BEEP_TWICE;
-    vals->current_beep.beep_id++;
-    vals->current_beep.beep_type=BEEP_ONCE;
-    vals->current_beep.beep_clock = vals->current_beep.beep_type;
+    beep_creator(vals,BEEP_ONCE);
+    // vals->current_beep.beep_id++;
+    // vals->current_beep.beep_type=BEEP_ONCE;
+    // vals->current_beep.beep_clock = vals->current_beep.beep_type;
   }
   else if(button1.clicks == 2 && vals->is_main_menu)
   {
@@ -1049,7 +1080,7 @@ void write_config_menu(StateVals *vals, TempTarget *target)
   //Rango de los cases
   static char cases[4] = {11,101,41,4}; //3rd value prev 41isnan
 
-  static char lcd_st[3][4] = {"OFF","0N "};
+  static char lcd_st[3][4] = {"OFF","ON "};
 
   //Define range of values for each variable
   for(int i=0;i<sizeof(target->range_temp);i++)
@@ -1236,6 +1267,12 @@ if((current_beep.beep_id != prev_beep_id) && millis()>beep_once_timeout)
   }
 }
 
+void beep_creator(StateVals *vals, BeepType beep_num)
+{
+  vals->current_beep.beep_id++;
+  vals->current_beep.beep_type=beep_num;
+  vals->current_beep.beep_clock = vals->current_beep.beep_type;
+}
 float arr_average(float arr[256], uint16_t size)
 {
   float sum = 0;
