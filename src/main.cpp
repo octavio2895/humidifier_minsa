@@ -113,8 +113,8 @@
 #define POSY4                   1
 
 //Alarm critical values
-#define MAX_PLATE_TEMP          100
-#define MAX_V                   101 _//101: mapped mode; 41: L/min mode
+#define MAX_PLATE_TEMP          130
+#define MAX_V                   101//101: mapped mode; 41: L/min mode
 
 
 // Globlas
@@ -202,9 +202,9 @@ struct TempTarget
   bool is_init_encoder_position;
   uint32_t encoder_position;
   char buffer[32];
-  char range_temp[11];
+  char range_temp[21]; //Previously 11
   char range_rh[101];
-  char range_v[41]; //Previously 41
+  char range_v[MAX_V]; //Previously 41
   char range_st[4] = {0,0,1,1};
 
 
@@ -338,6 +338,7 @@ byte Skull[] = {
   pinMode(FAN_PIN, OUTPUT);
   analogWrite(FAN_PIN, 0);
   pinMode(HOSE_PIN, OUTPUT);
+  digitalWrite(HOSE_PIN,LOW);
   pinMode(DHTPIN, INPUT);
   pinMode(PIN_THERMISTOR, INPUT_ANALOG);
   pinMode(WIND_THERM_PIN, INPUT_ANALOG);
@@ -465,8 +466,8 @@ void loop()
   {
     if (millis() > next_pidfan_control) 
     {
-      control_PID_Fan(&state_vals);
-      //mapped_fan_control(&state_vals);
+      //control_PID_Fan(&state_vals);
+      mapped_fan_control(&state_vals);
       next_pidfan_control = millis() + PID_FAN_CONTROL_DELAY;
       if(next_pidfan_control < millis()) next_pidfan_overflow_flag = true;
     }
@@ -598,9 +599,9 @@ void control_PD_humidity(StateVals *vals)
   error_humidity_old = error_humidity_current;
   old_millis = millis();
 
-  if (vals->duty_cycle > 50)
+  if (vals->duty_cycle > 60)
   {
-    vals->duty_cycle = 50;       
+    vals->duty_cycle = 60;       
   }
   else if (vals->duty_cycle < 0)
   {
@@ -844,12 +845,12 @@ void execute(StateVals *vals)
     }
 
     analogWrite(FAN_PIN,vals->fan_pwm);
-    analogWrite(HOSE_PIN, 25/*vals->hose_pwm*/);
+    digitalWrite(HOSE_PIN, HIGH/*vals->hose_pwm*/);
   }
   else
   {
     analogWrite(FAN_PIN, 0);
-    analogWrite(HOSE_PIN, 0);
+    digitalWrite(HOSE_PIN, HIGH);
     digitalWrite(PLATE_RELAY_PIN, HIGH);
     vals->plate_relay_state = false;
   }
@@ -930,7 +931,8 @@ void read_flow(StateVals *vals)
   {
     x_prom = arr_average(x_array, sizeof(x_array));
     y_prom = arr_average(y_array, sizeof(y_array));
-    sensor_airspeed =  1.133423908e-4f * x_prom*x_prom - 1.159148562e-4f * x_prom*y_prom -  7.96225819e-6f * y_prom*y_prom -  6.244728852e-2f * x_prom + 8.898163594e-2f * y_prom - 13.26006647;
+    //sensor_airspeed =  1.133423908e-4f * x_prom*x_prom - 1.159148562e-4f * x_prom*y_prom -  7.96225819e-6f * y_prom*y_prom -  6.244728852e-2f * x_prom + 8.898163594e-2f * y_prom - 13.26006647;
+    sensor_airspeed = 8.425983316e-4f  * x_prom*x_prom - 1.175031223e-3f * x_prom*y_prom + 4.294234517e-4f * y_prom*y_prom - 1.268141388e-1f * x_prom + 8.589904629e-2f * y_prom - 4.817979033f;
     speed_num = 0;
   }
 
@@ -941,7 +943,7 @@ void read_flow(StateVals *vals)
     sensor_airspeed = 0;
   }
   vals->current_airspeed = sensor_airspeed;
-  vals->current_airflow = vals->current_airspeed * ((3.1415/4) * pow(DIAMETER ,2)) * 60000;
+  vals->current_airflow = sensor_airspeed;//vals->current_airspeed * ((3.1415/4) * pow(DIAMETER ,2)) * 60000;
   
 }
 
@@ -1078,7 +1080,7 @@ void write_config_menu(StateVals *vals, TempTarget *target)
   static uint32_t value_encoder;
   
   //Rango de los cases
-  static char cases[4] = {11,101,41,4}; //3rd value prev 41isnan
+  static char cases[4] = {21,101,MAX_V,4}; //3rd value prev 41isnan
 
   static char lcd_st[3][4] = {"OFF","ON "};
 
