@@ -40,6 +40,21 @@
 #include <RotaryEncoder.h>
 #include <ClickButton.h>
 #include <math.h>
+//#include <Adafruit_SleepyDog.h>
+#include <IWatchdog.h>
+#include "gasboard7500E.h"
+#include <HardwareSerial.h>
+
+
+#ifdef O2SENSE_NEED_METADATA
+bool has_sernum = false;
+bool has_vernum = false;
+#endif
+
+HardwareSerial Serial3(PB11, PB10);
+
+// #define OUTPUT_BUFFER_SIZE 32
+// char output_buffer[OUTPUT_BUFFER_SIZE];
 
 // Physical properties
 #define DIAMETER                0.0177
@@ -48,6 +63,7 @@
 #define NOMINAL_TEMPERATURE     23
 // #define B_VALUE              870
 #define B_VALUE                 3950
+#define HUMIDITY_TEMP           95
 
 
 // Pin definitions
@@ -74,37 +90,51 @@
 // #define DEBUG
 
 // Timming
-#define FLOW_UPDATE_DELAY       100
+#define FLOW_UPDATE_DELAY       10
 #define TERMISTOR_UPDATE_DELAY  10
 #define DHT_UPDATE_DELAY        2005
 #define FLOW_ESTIMATION_DELAY   100
 #define BANGBANG_CONTROL_DELAY  100
-#define PID_FAN_CONTROL_DELAY   100
+#define PID_FAN_CONTROL_DELAY   50
 #define PID_UPDATE_DELAY        100
 #define EXECUTE_DELAY           10
 #define ENCODER_UPDATE_DELAY    10
-#define SCREEN_UPDATE_DELAY     10
+#define SCREEN_UPDATE_DELAY     500
 #define BEEP_UPDATE_DELAY       10
 #define BEEP_ONCE_DURATION      300
+#define ALARM_UPDATE_DELAY       10
+#define O2_UPDATE_DELAY         200
 
 //PID Values
-#define KP_BB                   60
-#define KD_BB                   60
+#define KP_PD_HUM               3.5
+#define KD_PD_HUM               0
 #define PERIODO                 2000
-#define KP_FAN                  30
-#define KD_FAN                  0//35
-#define KI_FAN                  17
+#define KP_FAN                  0
+#define KD_FAN                  0
+#define KI_FAN                  0.04
+#define KP_SMC                  0.02
+#define MAX_PWM_MODIFIER        500
+
+//Cursor Locations
+#define POSIBLE_POSITIONS       4
+#define POSX1                   4
+#define POSY1                   0
+#define POSX2                   13
+#define POSY2                   0
+#define POSX3                   4
+#define POSY3                   1
+#define POSX4                   13
+#define POSY4                   1
+
+//Alarm critical values
+#define MAX_PLATE_TEMP          130
+#define MAX_V                   101//101: mapped mode; 41: L/min mode
+
 
 // Globlas
 const float zeroWindAdjustment =  .2;
-uint32_t next_flow_update, next_termistor_update, next_dht_update, next_flow_estimation, next_bangbang_control, next_pidfan_control, next_pid_update, next_execute, next_encoder_update, next_screen_update, next_beep_update;
+uint32_t next_flow_update, next_termistor_update, next_dht_update, next_flow_estimation, next_bangbang_control, next_pidfan_control, next_pid_update, next_execute, next_encoder_update, next_screen_update, next_beep_update, next_alarm_update, next_o2_update;
 float kpa, kph;
-
-//Globals raras de Jahir
-//char* background(uint16_t,uint16_t,uint16_t);
-uint32_t next_jahir_screen_update = 0;
-volatile uint16_t buttonCounter = 0;
-static bool debug = 0;
 
 // Structs
 
@@ -112,9 +142,17 @@ enum BeepType
 {
   NO_BEEP,
   BEEP_ONCE,
-  BEEP_TWICE,
-  BEEP_TRRICE,
-  BEEP_CONINUOS
+  BEEP_TWICE = 3,
+  BEEP_THRICE = 5,
+  BEEP_CONTINUOS = 7
+};
+
+enum CursorPositions
+{
+  TOP_LEFT,
+  TOP_RIGHT,
+  DOWN_LEFT,
+  DOWN_RIGHT
 };
 
 struct Beeps
@@ -122,6 +160,7 @@ struct Beeps
   BeepType beep_type = NO_BEEP;
   uint16_t beep_priority = 0;
   uint16_t beep_id = 0;
+  uint8_t beep_clock = 0;
 };
 
 struct StateVals
@@ -141,16 +180,67 @@ struct StateVals
   float target_temp = 0; // Target temperature after hose. °C
   float target_humidity = 0; // Target relative humidity after hose. %RH
   float target_airflow = 0; // Target air flow. Lts/min
+  uint16_t initial_target_pwm = 0; //Target PWM for flow control
   bool pwr_state = 0; // Machine on or off.next_dht_update
   bool plate_relay_state = 0; // Plate on or off.
   bool plate_relay_cmd = 0;
-  bool over_temp_flag = 0; // The flag is set whenever the vapor temp is getting too close to output temp.
+  uint16_t o2_concentration = 0;
+  uint16_t o2_flow = 0;
+  uint16_t o2_temp = 0;
+  uint16_t o2_test = 0;
+  uint32_t clock = 0;
+  char o2_buffer[64];
   Beeps current_beep;
   uint16_t adc_therm = 0;
   float them_resistance = 0;
   float duty_cycle = 0;
+
+  uint16_t adc_flow_t = 0;
+  uint16_t adc_flow_v = 0;
+  
+  //Encoder Info Handlers
+  uint32_t button_counter = 0; //Controls the cursor position
+  bool is_main_menu = 1; //Controls Main menu state
+  bool is_config_mode = 0; //Controls configuration mode state
+  bool is_debug_mode = 0; //Controls debug mode
   //float fan_pwm = 0;
+  //Alarm Flags
+  bool is_alarm = 0;
+  bool is_vapor_too_hot = 0;
+  bool is_over_temp_flag = 0; // The flag is set whenever the relay is turned of because of the plate temp.
+  bool is_out_of_water = 0; //Check plate temp to see if there is water left.
 }state_vals;
+
+struct TempTarget
+{
+  uint16_t target_temp;
+  uint16_t target_humidity;
+  uint16_t target_v;
+  bool target_st;
+  bool is_init_encoder_position;
+  uint32_t encoder_position;
+  char buffer[32];
+  char range_temp[21]; //Previously 11
+  char range_rh[101];
+  char range_v[MAX_V]; //Previously 41
+  char range_st[4] = {0,0,1,1};
+
+
+}target_vals;
+
+struct Alarms
+{
+  bool  is_plate_too_hot;
+  bool  is_ready_working;
+  bool  is_setting_up;
+  bool  is_in_stand_by;
+  
+  bool  is_dry;
+  bool  has_unusual_flow;
+  bool  has_sensor_fault;
+  bool  error;
+
+}les_alarms;
 
 // Objects
 Thermistor* thermistor;
@@ -164,50 +254,148 @@ ClickButton button1(BUTTON, LOW, CLICKBTN_PULLUP);
 void read_flow(StateVals *vals);
 void read_thermistor(StateVals *vals);
 void estimate_flow(StateVals *vals);
-void control_bangbang(StateVals *vals);
+void control_PD_humidity(StateVals *vals);
+void control_SMC_temp (StateVals *vals);
 void control_PID_Fan(StateVals *vals);
 void mapped_fan_control(StateVals *vals);
 void update_pid(StateVals *vals);
 void execute(StateVals *vals);
 void read_dht(StateVals *vals);
-void read_encoder(StateVals *vals);
-void screen_manager(StateVals *vals);
+void read_encoder_button(StateVals *vals, TempTarget *target);
+void write_main_menu(StateVals *vals, TempTarget *target);
+void write_config_menu(StateVals *vals, TempTarget *target);
+void write_debug_menu(StateVals *vals, TempTarget *target);
 void screen_debug_manager(StateVals *vals);
 float get_density(float temp);
-void lcd_buffer_write(char buffer[32], uint16_t sizeof_buffer);
+void lcd_buffer_write(TempTarget *target);
 void beep_manager(StateVals *vals);
+void beep_creator(StateVals *vals, BeepType);
 void encoderButtonISR();
 void encoderISR();
 byte i2c_scanner();
 float arr_average(float *arr, uint16_t size);
 float integral_control(float *i_control, uint16_t isize);
+void manage_cursor(StateVals *vals);
+void read_flow_old(StateVals *vals);
+void alarm_manager(StateVals *vals, Alarms *alarm);
+void flow_to_PWM(StateVals *vals);
+void read_o2(StateVals *vals, TempTarget *target);
+
 //void lcd_buffer_write_debug(char buffer [200],uint16_t buffer_size,uint16_t view_port_init);
 
 
 
 void setup() 
 {
+
+
+
+// // Make custom characters:
+ byte Heat1[] = {
+  
+  B11011,
+  B10001,
+  B10001,
+  B00010,
+  B00010,
+  B00100,
+  B10001,
+  B11111
+};
+byte Water[] = {
+  B00100,
+  B01110,
+  B01110,
+  B11101,
+  B11101,
+  B11011,
+  B01110,
+  B00000
+};
+byte Temperatura[] = {
+  B00100,
+  B01010,
+  B01010,
+  B01010,
+  B01010,
+  B10001,
+  B10001,
+  B01110
+};
+byte Grade[] = {
+  B11100,
+  B10100,
+  B11100,
+  B00000,
+  B00000,
+  B00000,
+  B00000,
+  B00000
+};
+byte Bug[] = {
+  B11111,
+  B10101,
+  B11111,
+  B11111,
+  B01110,
+  B01010,
+  B11011,
+  B00000
+};
+byte Skull[] = {
+  B00000,
+  B01110,
+  B10101,
+  B11011,
+  B01110,
+  B01110,
+  B00000,
+  B00000
+};
+
+  TempTarget *target = &target_vals;
   Serial.begin(115200);
   Serial.println("Booting up!");
   pinMode(PLATE_RELAY_PIN, OUTPUT);
   pinMode(FAN_PIN, OUTPUT);
   analogWrite(FAN_PIN, 0);
   pinMode(HOSE_PIN, OUTPUT);
+  digitalWrite(HOSE_PIN,LOW);
   pinMode(DHTPIN, INPUT);
   pinMode(PIN_THERMISTOR, INPUT_ANALOG);
-  pinMode(WIND_THERM_PIN, INPUT_ANALOG); 
+  pinMode(WIND_THERM_PIN, INPUT_ANALOG);
   pinMode(WIND_SPEED_PIN, INPUT_ANALOG);
   pinMode(BUZZER_PIN, OUTPUT);
   lcd.begin(LCD_COLUMNS, LCD_ROWS, LCD_5x8DOTS);
+    // Create a new characters:
+  lcd.createChar(0, Temperatura);
+  lcd.createChar(1, Water);
+  lcd.createChar(2, Grade);
+  lcd.createChar(3, Bug);
+
   encoder.begin();
   dht.begin();
   attachInterrupt(digitalPinToInterrupt(PIN_A), encoderISR, CHANGE);
   attachInterrupt(digitalPinToInterrupt(PIN_B), encoderISR, CHANGE);
+  
+  #ifdef O2SENSE_NEED_METADATA
+  const uint8_t cmd_vernum[] = {O2SENSE_CMD_VERSIONNUMBER};
+  const uint8_t cmd_sernum[] = {O2SENSE_CMD_SERIALNUMBER};
+  #endif
+
+  o2sens_init();
+  Serial3.begin(9600);
+
+  //Boot up sequence
+  analogWrite(FAN_PIN, 0);
+  digitalWrite(PLATE_RELAY_PIN, HIGH);
   digitalWrite(BUZZER_PIN, HIGH);
-  lcd_buffer_write("Humidifier v0.01FABLAB-MINSA-UTP", 32);
+  sprintf(target->buffer, "Humidifier v1.00FABLAB-MINSA-UTP");
+  lcd_buffer_write(&target_vals);
   delay(2000);
   digitalWrite(BUZZER_PIN, LOW);
-  lcd_buffer_write("PROTOTIPO  ALPHAUSO EXPERIMENTAL", 32);
+  sprintf(target->buffer, "PROTOTIPO  ALPHAUSO EXPERIMENTAL");
+  lcd_buffer_write(&target_vals);
   digitalWrite(BUZZER_PIN, HIGH);
   delay(300);
   digitalWrite(BUZZER_PIN, LOW);
@@ -219,16 +407,14 @@ void setup()
   digitalWrite(BUZZER_PIN, HIGH);
   delay(300);
   digitalWrite(BUZZER_PIN, LOW);
- /* button1.Update();
-  if(button1.clicks =! 0)
-  {
-    debug = 1;
-  }*/
+  //IWatchdog.begin(4000000);
 }
 
 void loop() 
 {
-  static bool next_beep_overflow_flag = false, flow_estimate_overflow_flag = false, thermistor_update_overflow_flag = false, dht_update_overflow_flag = false, next_estimation_overflow_flag = false, next_bangbang_overflow_flag = false, next_pidfan_overflow_flag = false, pid_update_overflow_flag = false, next_execute_overflow_flag = false, next_encoder_overflow_flag = false, screen_update_overflow_flag = false;
+  StateVals *vals = &state_vals;
+  Alarms *alarm = &les_alarms;
+  static bool next_beep_overflow_flag = false, flow_estimate_overflow_flag = false, thermistor_update_overflow_flag = false, dht_update_overflow_flag = false, next_estimation_overflow_flag = false, next_bangbang_overflow_flag = false, next_pidfan_overflow_flag = false, pid_update_overflow_flag = false, next_execute_overflow_flag = false, next_encoder_overflow_flag = false, screen_update_overflow_flag = false, next_alarm_overflow_flag = false, o2_update_overflow_flag = false;
 
   if (!next_beep_overflow_flag)
   {
@@ -241,11 +427,23 @@ void loop()
   }
   else if(millis() < next_beep_update) next_beep_overflow_flag = false;
 
+  if (!next_alarm_overflow_flag)
+  {
+    if(millis() > next_alarm_update )
+    {
+      alarm_manager(&state_vals, &les_alarms);
+      next_alarm_update = millis() + ALARM_UPDATE_DELAY;
+      if(next_alarm_update < millis()) next_alarm_overflow_flag = true;
+    }
+  }
+  else if(millis() < next_alarm_update) next_alarm_overflow_flag = false;
+
   if (!flow_estimate_overflow_flag)
   {
     if (millis() > next_flow_update) 
     {
       read_flow(&state_vals);
+      //read_flow_old(&state_vals);
       next_flow_update = millis() + FLOW_UPDATE_DELAY;
       if(next_flow_update < millis()) flow_estimate_overflow_flag = true;
     }
@@ -271,6 +469,15 @@ void loop()
       if(next_dht_update < millis()) dht_update_overflow_flag = true;
     }
   else if(millis() < next_dht_update) dht_update_overflow_flag = false;
+  
+  if (!o2_update_overflow_flag)
+    if (millis() > next_o2_update) 
+    {
+      read_o2(&state_vals, &target_vals);
+      next_o2_update = millis() + O2_UPDATE_DELAY;
+      if(next_o2_update < millis()) o2_update_overflow_flag = true;
+    }
+  else if(millis() < next_o2_update) o2_update_overflow_flag = false;
 
   if (!next_estimation_overflow_flag)
   {
@@ -287,7 +494,8 @@ void loop()
   {
     if (millis() > next_bangbang_control) 
     {
-      control_bangbang(&state_vals);
+      control_PD_humidity(&state_vals);
+      control_SMC_temp(&state_vals);
       next_bangbang_control = millis() + BANGBANG_CONTROL_DELAY;
       if(next_bangbang_control < millis()) next_bangbang_overflow_flag = true;
     }
@@ -298,12 +506,13 @@ void loop()
   {
     if (millis() > next_pidfan_control) 
     {
-      control_PID_Fan(&state_vals);
+      //control_PID_Fan(&state_vals);
+      mapped_fan_control(&state_vals);
       next_pidfan_control = millis() + PID_FAN_CONTROL_DELAY;
       if(next_pidfan_control < millis()) next_pidfan_overflow_flag = true;
     }
   }
-  else if(millis() < next_pidfan_control) next_pidfan_overflow_flag = false;pid_update_overflow_flag;
+  else if(millis() < next_pidfan_control) next_pidfan_overflow_flag = false;
 
   if (!pid_update_overflow_flag)
   {
@@ -332,7 +541,7 @@ void loop()
     if (millis() > next_encoder_update) 
     {
 
-      read_encoder(&state_vals);
+      read_encoder_button(&state_vals, &target_vals);
       next_encoder_update = millis() + ENCODER_UPDATE_DELAY;
       if(next_encoder_update < millis()) next_encoder_overflow_flag = true;
 
@@ -342,22 +551,27 @@ void loop()
 
   if (!screen_update_overflow_flag)
   {
+    manage_cursor(&state_vals);
     if (millis() > next_screen_update) 
-    {
-      if(!debug)
+    {  
+      if(vals->is_main_menu)
       {
-        screen_manager(&state_vals);
+        write_main_menu(&state_vals, &target_vals);
       }
-      else
+      else if (vals->is_config_mode)
       {
-        screen_debug_manager(&state_vals);
+        write_config_menu(&state_vals, &target_vals);
+      }
+      else if (vals->is_debug_mode)
+      {
+        write_debug_menu(&state_vals, &target_vals);
       }
       next_screen_update = millis() + SCREEN_UPDATE_DELAY;
       if(next_screen_update < millis()) screen_update_overflow_flag = true;
     }
   }
   else if(millis() < next_screen_update) screen_update_overflow_flag = false;
-
+//IWatchdog.reload();
 }
 
 void estimate_flow(StateVals *vals)
@@ -392,7 +606,7 @@ void estimate_flow(StateVals *vals)
   // serial_buff = "";
   sprintf(serial_buff, "DEBUG: AirMassFlow is estimated to be about %1.5f kg/m3", air_mass_flow);
   Serial.println(serial_buff);
-  // serial_buff = "";control_bangbang
+  // serial_buff = "";control_PD_humidity
   sprintf(serial_buff, "DEBUG: WaterMassFlow is estimated to be about %1.5f kg/m3", water_mass_flow);
   Serial.println(serial_buff);
   // serial_buff = "";
@@ -405,70 +619,107 @@ void estimate_flow(StateVals *vals)
   #endif
 }
 
-void control_bangbang(StateVals *vals)
+void control_PD_humidity(StateVals *vals)
 {
   static float error_humidity_current;
   static float error_humidity_old;
   static float delta_error_humidity_current;
-  //volatile float delta_error_humidity_old;
-  //volatile float targe_humidity = 80;//vals->target_humidity;
-  static uint32_t current_step = millis()%PERIODO,old_millis;
+  float current_step = millis()%PERIODO;
+  static float old_millis;
 
+  vals->clock = current_step;
+  //Read error values
+  error_humidity_current = vals->target_humidity - vals->vapor_humidity;
+  delta_error_humidity_current = (error_humidity_current - error_humidity_old)/(millis()-old_millis);
+
+  //Write new Duty Cycle value
+  vals->duty_cycle = (KP_PD_HUM * error_humidity_current + KD_PD_HUM * delta_error_humidity_current);
   
-  //Enter logic if the temperature is going up
-  //if (vals->plate_temp < (target_humidity-PLATE_HISTERESIS))
-  //{
-    //Read error values
-    error_humidity_current = vals->target_humidity - vals->vapor_humidity;
-    delta_error_humidity_current = (error_humidity_current - error_humidity_old)/(millis()-old_millis);
+  //Overwrite old error values
+  error_humidity_old = error_humidity_current;
+  old_millis = millis();
 
-    //Write new Duty Cycle value
-    vals->duty_cycle = (KP_BB * error_humidity_current + KD_BB * delta_error_humidity_current);
-    
-    //Overwrite old error values
-    error_humidity_old = error_humidity_current;
-    old_millis = millis();
-    //delta_error_humidity_old = delta_error_humidity_current;
+  if (vals->duty_cycle > 60)
+  {
+    vals->duty_cycle = 60;       
+  }
+  else if (vals->duty_cycle < 0)
+  {
+    vals->duty_cycle = 0;       
+  }
 
-     if (vals->duty_cycle > 100)
-     {
-        vals->duty_cycle = 100;       
-     }
-     else if (vals->duty_cycle < 0)
-     {
-        vals->duty_cycle = 0;       
-     }
-      #ifdef DEBUG
-    Serial.println("BANGBANG...");
-    #endif
-    // if (vals->plate_temp < (vals->target_humidity-PLATE_HISTERESIS))vals->plate_relay_cmd = true; // Under lower range, activate.
-    // else if (vals->plate_temp > (vals->plate_temp+PLATE_HISTERESIS))vals->plate_relay_cmd = false; // Over upper range, deactivate.
-    
+  if (vals->is_over_temp_flag)
+  {
+    vals->duty_cycle = 0;
+  }
+  
+  // if ((current_step < ((vals->duty_cycle/100)*PERIODO)))
+  // {
+  //   vals->plate_relay_cmd = true;
+  // }
+  // else
+  // {
+  //   vals->plate_relay_cmd = false;
+  // }
+  // //TODO: Make it a different function
+  // if (vals->plate_temp > MAX_PLATE_TEMP)
+  // {
+  //   vals->is_over_temp_flag = 1;
+  // }
+  // if (vals->plate_temp < MAX_PLATE_TEMP-15 && vals->is_over_temp_flag)
+  // {
+  //   vals->is_over_temp_flag = 0;
+  // }
 
-    /*if (vals->plate_temp < (target_humidity-PLATE_HISTERESIS))vals->plate_relay_cmd = true; // Under lower range, activate.
-    else if (vals->plate_temp > (target_humidity+PLATE_HISTERESIS))vals->plate_relay_cmd = false; // Over upper range, deactivate.*/
+}
 
-    if (current_step < (vals->duty_cycle/100)*PERIODO)
-    {
-      vals->plate_relay_cmd = true;
-    }
-    else
-    {
-      vals->plate_relay_cmd = false;
-      vals->plate_relay_state = false;
-    }
+void control_SMC_temp (StateVals *vals)
+{
+  static float temp_old, old_millis,current_millis,pendiente,error_temp;
+  float current_step = millis()%PERIODO;
+  current_millis = millis();
+  pendiente = (vals->plate_temp-temp_old)/(current_millis-old_millis);
+  error_temp = vals->target_humidity - vals->plate_temp;
+
     
-    
-    /*  if (vals->duty_cycle<1)
-    {
-      vals->plate_relay_cmd = false;
-    }*/
-  //}
-  /*else*/ 
-    if (vals->vapor_humidity > vals->target_humidity || vals->plate_temp > 130)
-    {
-      vals->plate_relay_cmd = false;
-    }
+  if(pendiente < KP_SMC*error_temp)
+  {
+    //vals->plate_relay_cmd = 1;
+    //vals->duty_cycle = 30;
+  }
+  else
+  {
+    //vals->plate_relay_cmd = 0;
+    vals->duty_cycle = 0;
+  }
+  old_millis = millis();
+  temp_old = vals->plate_temp;
+
+  if (vals->is_over_temp_flag)
+  {
+    vals->duty_cycle = 0;
+  }
+  //TODO: Make it a different function
+  if ((current_step < ((vals->duty_cycle/100)*PERIODO)))
+  {
+    vals->plate_relay_cmd = true;
+  }
+  else
+  {
+    vals->plate_relay_cmd = false;
+  }
+
+
+  //TODO: Make it a different function
+  if (vals->plate_temp > MAX_PLATE_TEMP)
+  {
+    vals->is_over_temp_flag = 1;
+  }
+  if (vals->plate_temp < MAX_PLATE_TEMP-15 && vals->is_over_temp_flag)
+  {
+    vals->is_over_temp_flag = 0;
+  }
+
 
 }
 
@@ -477,57 +728,100 @@ void control_PID_Fan(StateVals *vals)
   static float error_airflow_current;
   static float error_airflow_old;
   static float delta_error_airflow_current, integral_error_airflow_current;
-  static uint32_t old_millis;
+  static uint32_t  pwm_modifier, pwm_const;
 
-  static float delta_time  = (millis()-old_millis);
-  static uint8_t integral_num = 0;
-  static float integral_array[256];
-  static bool init = 0;
-
-  //Enter logic if the temperature is going up
-  //if (vals->plate_temp < (target_humidity-PLATE_HISTERESIS))
-  //{
-    //Read error values
-    error_airflow_current = vals->target_airflow - vals->current_airflow;
-    delta_error_airflow_current = (error_airflow_current - error_airflow_old)/(delta_time);
-    
-    //TODO Turn into a function - Integral limiter
   
-    if (!init)
+  static uint16_t old_millis, integral_num = 0;
+  static float integral_array[180], old_target_flow;
+  static bool init = 0, pwm_bool = 0;
+  static float delta_time  = (millis()-old_millis);
+
+  //Read error values
+  error_airflow_current = vals->target_airflow - vals->current_airflow;
+  delta_error_airflow_current = (error_airflow_current - error_airflow_old)/(delta_time);
+  
+  //TODO Turn into a function - Integral limiter
+
+  if (!init)
+    {
+      for(int i = 0; i<(sizeof(integral_array)/sizeof(integral_array[0])); i++)
       {
-        for(int i = 0; i<(sizeof(integral_array)/sizeof(integral_array[0])); i++)
-        {
-          integral_array[i] = 0.0;
-        }
-        init = true;
+        integral_array[i] = 0.0;
       }
-    integral_array[integral_num++] = error_airflow_current*delta_time;
-    integral_error_airflow_current = integral_control(integral_array, sizeof(integral_array));
-    
-    //Write new Duty Cycle value    
-    vals->fan_pwm = (KP_FAN * error_airflow_current + KI_FAN * integral_error_airflow_current +  KD_FAN * delta_error_airflow_current);
-    
-    //Overwrite old error values
-    error_airflow_old = error_airflow_current;
-    old_millis = millis();
-    //delta_error_humidity_old = delta_error_humidity_current;
+      init = true;
+    }
+  integral_array[integral_num++] = error_airflow_current*delta_time/1000;
+  integral_error_airflow_current = integral_control(integral_array, sizeof(integral_array));
+  
+  //Calculate PWM reference value and update error
+  flow_to_PWM(&state_vals);
+  old_target_flow = vals->target_airflow;
 
-     if (vals->fan_pwm > 256)
-     {
-        vals->fan_pwm = 256;       
-     }
-     else if (vals->fan_pwm < 0)
-     {
-        vals->fan_pwm = 0;       
-     }
-    
+  if(integral_num > 180)
+  {
+    integral_num = 0;
+  }
 
+  //Calculate PWM modifier
+  pwm_modifier = (KP_FAN * error_airflow_current + KI_FAN * integral_error_airflow_current +  KD_FAN * delta_error_airflow_current);
+  
+  // if (pwm_modifier > MAX_PWM_MODIFIER)
+  // {
+  //   pwm_modifier = MAX_PWM_MODIFIER;       
+  // }
+  // else if (pwm_modifier < -MAX_PWM_MODIFIER)
+  // {
+  //   pwm_modifier = MAX_PWM_MODIFIER;       
+  // }
+
+  //Write new PWM value    
+  vals->fan_pwm = vals->initial_target_pwm + pwm_modifier + 0.0717105 * vals->initial_target_pwm * vals->initial_target_pwm - 7.6985326 * vals->initial_target_pwm + 230.516;
+  
+  if (error_airflow_current < 1.5 && error_airflow_current > -1.5 && !pwm_bool)
+  {
+    pwm_const = vals->fan_pwm;
+    pwm_bool = 1;
+  }
+  else if (error_airflow_current > 1.5 || error_airflow_current < -1.5)
+  {
+    pwm_bool = 0;
+  }
+  
+  if (pwm_bool)
+  {
+    vals->fan_pwm = pwm_const;
+  }
+  //Overwrite old error values>
+  error_airflow_old = error_airflow_current;
+  old_millis = millis();
+  //delta_error_humidity_old = delta_error_humidity_current;
+
+  if (vals->fan_pwm > 256)
+  {
+    vals->fan_pwm = 256;       
+  }
+  else if (vals->fan_pwm < 0 || vals->target_airflow < 2)
+  {
+    vals->fan_pwm = 0;       
+  }
+  
+
+}
+
+void flow_to_PWM(StateVals *vals)
+{ 
+  float X = vals->target_airflow;
+  uint16_t raw_pwm = 0.001063518307105 * X*X*X - 0.045439480234373 * X*X + 1.69342290412888 * X + 10.8045468316241;
+  vals->initial_target_pwm = map(raw_pwm, 0, 100, 0, 256);
 }
 
 void mapped_fan_control(StateVals *vals)
 {
   //Map target_flow (0-100%) to PWM[50,256] 
-  vals->fan_pwm = map(vals->target_airflow, 0, 100, 50, 256);
+
+  vals->fan_pwm = map(vals->target_airflow, 0, 100, 0, 256);
+ 
+  
 }
 
 void update_pid(StateVals *vals)
@@ -542,7 +836,7 @@ void update_pid(StateVals *vals)
   float p_airflow_error = airflow_error * kpa;
 
   vals->target_plate_temp = p_humidity_error;
-  vals->fan_pwm = p_airflow_error;
+  //vals->fan_pwm = p_airflow_error;
 
 
   #ifdef DEBUG
@@ -569,36 +863,34 @@ void execute(StateVals *vals)
   #endif
   if(vals->pwr_state)
   {
-    if(vals->vapor_temp >= vals->target_temp - MIN_DELTA_T && vals->over_temp_flag == 0) // Checks if vapor temp is over nearinhose_ping temp and activates overtempflag;
+    if(vals->vapor_temp >= vals->target_temp)
     {
-      vals->over_temp_flag = true;
-    }
-    else if (vals->vapor_temp < vals->target_temp - MIN_DELTA_T && vals->over_temp_flag) // Checks if vapor temp is lower than nearing temp and deactivate overtempflag
+      vals->is_vapor_too_hot = 1;
+    } 
+    else
     {
-      vals->over_temp_flag = false;
+      vals->is_vapor_too_hot = 0;
     }
+    
 
-    // if(!vals->over_temp_flag && vals->plate_relay_cmd)
-    if(vals->plate_relay_cmd)
+    if(vals->plate_relay_cmd && !vals->is_vapor_too_hot)
     {
       digitalWrite(PLATE_RELAY_PIN, LOW);
       vals->plate_relay_state = true;
     }
-
-    // if(vals->over_temp_flag || !vals->plate_relay_cmd)
-    if(!vals->plate_relay_cmd)
+    else
     {
       digitalWrite(PLATE_RELAY_PIN, HIGH);
       vals->plate_relay_state = false;
     }
 
-    analogWrite(FAN_PIN, vals->fan_pwm);
-    analogWrite(HOSE_PIN, 25/*vals->hose_pwm*/);
+    analogWrite(FAN_PIN,vals->fan_pwm);
+    digitalWrite(HOSE_PIN, HIGH/*vals->hose_pwm*/);
   }
   else
   {
     analogWrite(FAN_PIN, 0);
-    analogWrite(HOSE_PIN, 0);
+    digitalWrite(HOSE_PIN, HIGH);
     digitalWrite(PLATE_RELAY_PIN, HIGH);
     vals->plate_relay_state = false;
   }
@@ -610,7 +902,7 @@ void read_dht(StateVals *vals)
   #ifdef DEBUG
   Serial.println("Reading DHT...");
   #endif
-  float humidity, temp;
+  float humidity, temp; 
   humidity = dht.readHumidity();
   temp = dht.readTemperature();
   Serial.println(humidity);
@@ -659,150 +951,261 @@ void read_flow(StateVals *vals)
   #endif
   float TMP_Therm_ADunits = analogRead(WIND_THERM_PIN);
   float RV_Wind_ADunits = analogRead(WIND_SPEED_PIN);
+  vals->adc_flow_t = TMP_Therm_ADunits;
+  vals->adc_flow_v = RV_Wind_ADunits;
+  float x = RV_Wind_ADunits;
+  float y = TMP_Therm_ADunits;
+  static float x_prom,y_prom,sensor_airspeed;
+
+
+  static uint8_t speed_num = 0;
+  static float x_array[10] {0,0,0,0,0,0,0,0,0,0};
+  static float y_array[10] {0,0,0,0,0,0,0,0,0,0};
+  
+  x_array[speed_num] = x;
+  y_array[speed_num] = y;
+  speed_num++; 
+
+ 
+  if (speed_num > 10)
+  {
+    x_prom = arr_average(x_array, sizeof(x_array));
+    y_prom = arr_average(y_array, sizeof(y_array));
+    //sensor_airspeed =  1.133423908e-4f * x_prom*x_prom - 1.159148562e-4f * x_prom*y_prom -  7.96225819e-6f * y_prom*y_prom -  6.244728852e-2f * x_prom + 8.898163594e-2f * y_prom - 13.26006647;
+    sensor_airspeed = 8.425983316e-4f  * x_prom*x_prom - 1.175031223e-3f * x_prom*y_prom + 4.294234517e-4f * y_prom*y_prom - 1.268141388e-1f * x_prom + 8.589904629e-2f * y_prom - 4.817979033f;
+    speed_num = 0;
+  }
+
+  
+  
+  if (sensor_airspeed <  0)
+  {
+    sensor_airspeed = 0;
+  }
+  vals->current_airspeed = sensor_airspeed;
+  vals->current_airflow = sensor_airspeed;//vals->current_airspeed * ((3.1415/4) * pow(DIAMETER ,2)) * 60000;
+  
+}
+
+void read_flow_old(StateVals *vals) 
+{
+  #ifdef DEBUG
+  Serial.println("Reading flow...");
+  #endif
+  float TMP_Therm_ADunits = analogRead(WIND_THERM_PIN);
+  float RV_Wind_ADunits = analogRead(WIND_SPEED_PIN);
+  vals->adc_flow_t = TMP_Therm_ADunits;
+  vals->adc_flow_v = RV_Wind_ADunits;
   float x = RV_Wind_ADunits;
   float y = TMP_Therm_ADunits;
   float sensor_airspeed;
-  /*// float RV_Wind_Volts = (RV_Wind_ADunits *  0.0048828125);
-  float RV_Wind_Volts = (RV_Wind_ADunits *  0.0032226563);
-  float zeroWind_ADunits = -0.0006 * ((float)TMP_Therm_ADunits * (float)TMP_Therm_ADunits) + 1.0727 * (float)TMP_Therm_ADunits + 47.172;
-  // float zeroWind_volts = (zeroWind_ADunits * 0.0048828125) - zeroWindAdjustment;
-  float zeroWind_volts = (zeroWind_ADunits * 0.0032226563) - zeroWindAdjustment;
-  float WindSpeed_mps =  pow(((RV_Wind_Volts - zeroWind_volts) / .2300) , 2.7265) / 21.97;*/
+  
   sensor_airspeed = 2.139572236e-5*(x*x)+2.16862434e-4*(x*y)-3.59876476e-4*(y*y)-1.678691211e-1*x+3.411792421e-1*y - 61.07186374; 
 
   if (sensor_airspeed < 0)
   {
     sensor_airspeed = 0;
   }
-  vals->current_airspeed = sensor_airspeed;
+
+  static uint8_t speed_num = 0;
+  static float speed_array[2];
+  static bool is_init = 0;
+  if (!is_init)
+    {
+      for(int i = 0; i<(sizeof(speed_array)/sizeof(speed_array[0])); i++)
+      {
+        speed_array[i] = 0;
+      }
+      is_init = true;
+    }
+  speed_array[speed_num] = sensor_airspeed;
+  speed_num++; 
+
+  if (speed_num > 2)
+  {
+    speed_num = 0;
+  }
+
+  vals->current_airspeed = arr_average(speed_array, sizeof(speed_array));
   vals->current_airflow = vals->current_airspeed * ((3.1415/4) * pow(DIAMETER ,2)) * 60000;
+
+}
+
+void read_o2(StateVals *vals, TempTarget *target)
+{
+  analogWrite(FAN_PIN, 0);
+   if (Serial3.available()) // at least 1 byte from UART arrived
+  {
+    if(vals->o2_test%1000>19)
+    {
+      //o2sens_init();
+      vals->o2_test = 0;
+      //o2sens_clearNewData(); // clear the new packet flag
+    }
+    //vals->o2_buffer = o2sens_getRawBuffer();
+
+    o2sens_feedUartByte(Serial3.read()); // give byte to the parser
+    vals->o2_test = vals->o2_test + 1;
+    if (o2sens_hasNewData()) // a complete packet has been processed
+    {
+      o2sens_clearNewData(); // clear the new packet flag
+      vals->o2_test = vals->o2_test + 1000 - 12;
+      vals->o2_concentration = o2sens_getConcentration16();
+      vals->o2_flow = o2sens_getFlowRate16();
+      vals->o2_temp = o2sens_getTemperature16();
+      
+    }
+  }
+}
+
+void read_encoder_button(StateVals *vals, TempTarget *target)
+{
+  button1.Update();
+  if(button1.clicks == 1 && (vals->is_config_mode || vals->is_debug_mode)) 
+  {
+    vals->button_counter++;
+    target->is_init_encoder_position = 1;
+  }
+  else if(button1.clicks == -1 )
+  {
+    //Screen state machine
+    if(vals->is_main_menu)
+    {
+      vals->is_config_mode = 1;
+      vals->is_main_menu = 0;  
+      vals->button_counter = 0;
+      vals->is_debug_mode = 0;
+    }
+    else if(vals->is_config_mode)
+    {
+      vals->is_config_mode = 0;
+      vals->is_main_menu = 1;
+      vals->is_debug_mode = 0;
+      vals->target_temp = target->target_temp;
+      vals->target_humidity = target->target_humidity;
+      vals->target_airflow = target->target_v;
+      vals->pwr_state = target->target_st;
+    }
+    else if(vals->is_debug_mode)
+    {
+      vals->is_config_mode = 0;
+      vals->is_main_menu = 1;
+      vals->is_debug_mode = 0;
+    }
+    beep_creator(vals,BEEP_ONCE);
+    // vals->current_beep.beep_id++;
+    // vals->current_beep.beep_type=BEEP_ONCE;
+    // vals->current_beep.beep_clock = vals->current_beep.beep_type;
+  }
+  else if(button1.clicks == 2 && vals->is_main_menu)
+  {
+    vals->is_config_mode = 0;
+    vals->is_main_menu = 0;  
+    vals->is_debug_mode = 1;
+    vals->current_beep.beep_id++;
+    vals->current_beep.beep_type=BEEP_CONTINUOS;
+    vals->current_beep.beep_clock = vals->current_beep.beep_type;
+  }
+}
+
+void manage_cursor(StateVals *vals)
+{
+  if(vals->is_config_mode)
+  {
+    
+    switch(vals->button_counter%POSIBLE_POSITIONS)
+    {
+      case TOP_LEFT:
+        lcd.setCursor(POSX1,POSY1);
+        break;
+      case TOP_RIGHT:
+        lcd.setCursor(POSX2,POSY2);
+        break;
+      case DOWN_LEFT:
+        lcd.setCursor(POSX3,POSY3);
+        break;
+      case DOWN_RIGHT:
+        lcd.setCursor(POSX4,POSY4);     
+        break;    
+    }
+    lcd.blink();
+  }
+  else
+  {
+    lcd.noBlink();
+  }
   
 }
 
-void read_encoder(StateVals *vals)
-{
-  return;
-}
-
-
-void screen_manager(StateVals *vals)
+void write_config_menu(StateVals *vals, TempTarget *target)
 {
   #ifdef DEBUG
   Serial.println("Updating LCD...");
 
   #endif
-  static bool menu;
-  static char buffer[32];
-  static const char mode1[4] = {'A','B','C','D'};
   
-  static const char posx[4] = {4,13,4,13};
-  static const char posy[4] = {0,0,1,1};
- 
-  static char range_temp[11];
-  static char range_rh[101];
-  static char range_v[101]; //Previously 41
-  static char range_st[4] = {0,0,1,1};
+  static uint32_t value_encoder;
   
   //Rango de los cases
-  static char cases[4] = {11,101,101,4}; //3rd value prev 41
+  static char cases[4] = {21,101,MAX_V,4}; //3rd value prev 41isnan
 
-  static uint16_t x,y,target_temp,target_humidity,target_v;
-  static char lcd_st[3][4] = {"OFF","0N "};
-  static bool aux,target_st;
+  static char lcd_st[3][4] = {"OFF","ON "};
 
-  for(int i=0;i<sizeof(range_temp);i++)
+  //Define range of values for each variable
+  for(int i=0;i<sizeof(target->range_temp);i++)
   {
-    range_temp[i] = i+28;
+    target->range_temp[i] = i+28;
   }
-  for(int i=0;i<sizeof(range_rh);i++)
+  for(int i=0;i<sizeof(target->range_rh);i++)
   {
-    range_rh[i] = i;
+    target->range_rh[i] = i;
   }
-  for(int i=0;i<sizeof(range_v);i++)
+  for(int i=0;i<sizeof(target->range_v);i++)
   {
-    range_v[i] = i;
+    target->range_v[i] = i;
   }
   
-
-  //See if a click happened
-  button1.Update();
-  if(button1.clicks == 1 && menu) 
-  {
-    buttonCounter++;
-    aux=true;
-  }
-
-  //See if long click happened
-  if(button1.clicks == -1 )
-  {
-    menu = !menu;
-    if (menu)
+    if(target->is_init_encoder_position)
     {
-      vals->current_beep.beep_id++;
-      vals->current_beep.beep_type=BEEP_ONCE;
-      buttonCounter=0;
-    }
-    else
-    {
-      vals->current_beep.beep_id++;
-      vals->current_beep.beep_type=BEEP_ONCE;
-      vals->target_temp = target_temp;
-      vals->target_humidity = target_humidity;
-      vals->target_airflow = target_v;
-      vals->pwr_state = target_st;
-    }
-  }
-
-  //Print Cursor IN CONFIG MODE
-  if (menu) //Menu Mode
-  {
-    lcd.setCursor(posx[x],posy[x]);
-    lcd.blink();
-
-    //Manage Cursor
-    x = (buttonCounter)%4;
-
-    if(aux)
-    {
-      aux=false; 
-      switch (mode1[x])
+      target->is_init_encoder_position = false; 
+      switch (vals->button_counter%POSIBLE_POSITIONS)
       {
-        case 'A':
-          for(int i=0;i<=sizeof(range_temp);i++)
+        case TOP_LEFT:
+          for(int i=0;i<=sizeof(target->range_temp);i++)
           {
-            if(target_temp==range_temp[i])
+            if(target->target_temp==target->range_temp[i])
             {
-              y=i;
+              value_encoder = i;
               break;  
             }
           }
           break;
-        case 'B':
-          for(int i=0;i<=sizeof(range_rh);i++)
+        case TOP_RIGHT:
+          for(int i=0;i<=sizeof(target->range_rh);i++)
           {
-            if(target_humidity==range_rh[i])
+            if(target->target_humidity==target->range_rh[i])
             {
-              y=i;
+              value_encoder = i;
               break;  
             }
           }
           break;
-        case 'C':
-          for(int i=0;i<=sizeof(range_v);i++)
+        case DOWN_LEFT:
+          for(int i=0;i<=sizeof(target->range_v);i++)
           {
-            if(target_v==range_v[i])
+            if(target->target_v==target->range_v[i])
             {
-              y=i;
+              value_encoder = i;
               break;  
             }
           }
           break;
-        case 'D':
-        for(int i=0;i<=sizeof(range_st);i++)
+        case DOWN_RIGHT:
+        for(int i=0;i<=sizeof(target->range_st);i++)
         {
-          if(target_st==range_st[i])
+          if(target->target_st==target->range_st[i])
           {
-            y=i;
+            value_encoder = i;
             break;  
           }
         }
@@ -810,50 +1213,88 @@ void screen_manager(StateVals *vals)
         default:
           break;
       }
-      encoder.setPosition((cases[x])*100+y);
+      encoder.setPosition((cases[vals->button_counter%POSIBLE_POSITIONS])*100+value_encoder);
     }
     //Handle Encoder in CONFIG MODE
-    y = ((encoder.getPosition()+2000*cases[x]))%cases[x];
+    target->encoder_position = ((encoder.getPosition()+2000*cases[vals->button_counter%POSIBLE_POSITIONS]))%cases[vals->button_counter%POSIBLE_POSITIONS];
 
-    switch (mode1[x])
+    switch (vals->button_counter%POSIBLE_POSITIONS)
       {
-      case 'A':
-        target_temp = range_temp[y];
+      case TOP_LEFT:
+        target->target_temp = target->range_temp[target->encoder_position];
         break;
-      case 'B':
-        target_humidity = range_rh[y];
+      case TOP_RIGHT:
+        target->target_humidity = target->range_rh[target->encoder_position];
         break;
-      case 'C':
-        target_v = range_v[y];
+      case DOWN_LEFT:
+        target->target_v = target->range_v[target->encoder_position];
         break;
-      case 'D':
-        target_st = range_st[y];     
+      case DOWN_RIGHT:
+        target->target_st = target->range_st[target->encoder_position];     
         break;    
-      default:
-        break;
       }
-    sprintf(buffer, " T:%2dC  RH:%3d%%  V:%3d%%      %c%c%c ", target_temp,target_humidity,target_v,lcd_st[target_st][0],lcd_st[target_st][1],lcd_st[target_st][2]);
-  }
-  else //Background Mode
-  {
+    sprintf(target->buffer, " T:%2dC  RH:%3d%%  V:%2dL/min  %c%c%c ", target->target_temp,target->target_humidity,target->target_v,lcd_st[target->target_st][0],lcd_st[target->target_st][1],lcd_st[target->target_st][2]);
 
-    //Print ACTUAL Values
-    if(vals->pwr_state) sprintf(buffer, "T:%dC  RH:%3d%%  V:%3d%%      ON  ", (int)vals->vapor_temp, (int)vals->vapor_humidity, (int)vals->current_airflow);
-    else sprintf(buffer, "T:%dC  RH:%3d%%  V:%3d%%      OFF ", (int)vals->vapor_temp, (int)vals->vapor_humidity, (int)vals->current_airflow);
-    
-    //Print Thermal resistor values
-    //if(vals->pwr_state) sprintf(buffer, "T:%dC  RH:%3d%%  V:%2dL/min   ON  ", (int)vals->vapor_temp, (int)vals->vapor_humidity, (int)vals->current_airspeed);
-    /*else*/ 
-    //DEBUG
-    //sprintf(buffer, "Air_F:%dspd Therm:%dC  FPWM:%d St:%d ", (int)vals->current_airflow, (int)vals->current_airspeed, (int)vals->fan_pwm,(int)vals->plate_relay_state);
-    
-  }
-  if(millis()>next_jahir_screen_update)
-  { 
-    lcd_buffer_write(buffer, sizeof(buffer));
-    next_jahir_screen_update = millis() + 300;
-  }
-  return;
+  lcd_buffer_write(&target_vals);
+
+}
+
+void write_main_menu(StateVals *vals, TempTarget *target)
+{
+  static bool is_state = 1;
+  static uint8_t counter = 0;
+  // if(vals->pwr_state && is_state) 
+  // {
+  //   sprintf(target->buffer, "%c%2d%cC   %c%3d%%   V:%2dL/min  ON   ", byte(0), (int)vals->vapor_temp, byte(2), byte(1), (int)vals->vapor_humidity, (int)vals->current_airflow);
+  // }
+  // else if (is_state)
+  // {
+  //   sprintf(target->buffer, "%c%2d%cC   %c%3d%%   V:%2dL/min  OFF  ", byte(0), (int)vals->vapor_temp, byte(2), byte(1), (int)vals->vapor_humidity, (int)vals->current_airflow);
+  // }
+  // else
+  //{
+  sprintf(target->buffer, "O2:%d Flow:%d %12d %d     ",(int)vals->o2_concentration,(int)vals->o2_flow,(int)vals->o2_buffer,(int)vals->o2_test);
+    //sprintf(target->buffer, "%02X                                                  ",vals->o2_buffer);
+    //sprintf(target->buffer, "%d                                                  ",(int)vals->o2_buffer);
+  //}
+   
+  lcd_buffer_write(&target_vals);
+  // counter++;
+  // if(is_state)
+  // {
+  //   counter++;
+  //   counter++;
+  //   counter++;
+  // }
+  // if (counter>10)
+  // {
+  //   is_state = !is_state;
+  //   counter = 0;
+  // }
+
+
+
+}
+
+void write_debug_menu(StateVals *vals, TempTarget *target)
+{
+
+  switch (vals->button_counter%POSIBLE_POSITIONS)
+      {
+      case TOP_LEFT:
+        sprintf(target->buffer, "%c CMD:%2d  %4d   Clk:%d  DC:%3d %c", byte(3),(int)vals->plate_relay_cmd,millis()%PERIODO, (int)vals->current_beep.beep_clock, (int)vals->duty_cycle,byte(3));
+        break;
+      case TOP_RIGHT:
+        sprintf(target->buffer, "%c Flow:%2dL/min rPWM:%3d PWM:%3d%c",byte(3),(int)vals->current_airflow,(int)vals->initial_target_pwm,(int)vals->fan_pwm,byte(3)); // overtempplat ,cuando el termistor fuerza que se apague
+        break;
+      case DOWN_LEFT:
+        sprintf(target->buffer, "%c ADC_THERM:%3d PL_T:%2d OVR_T:%d",byte(3),(int)vals->adc_therm, (int)vals->plate_temp, (int)vals->is_over_temp_flag ); //adC TERMISTOR,  temp plato, velocidad,
+        break;
+      case DOWN_RIGHT:
+        sprintf(target->buffer, "%c ADC_T:%d ADC_V:%2d PWM:%3d %c",byte(3),(int)vals->adc_flow_t,(int)vals->adc_flow_v,(int)vals->fan_pwm,byte(3));
+        break;    
+      }
+  lcd_buffer_write(&target_vals);
 }
 
 float get_density(float t)
@@ -871,126 +1312,60 @@ void encoderButtonISR()
   encoder.readPushButton(); 
 }
 
-/*void screen_debug_manager(StateVals *vals, uint32_t millis)
+void init_encoder_position()
 {
-  static char buffer[22];
-  static const char mode1[4] = {'A','B','C','D'};
-  static uint16_t y;// view_port_init;
-  float plate_temp = 0; // Current plat temperature. °C
-  float vapor_temp = 0; // Current temperature at vapor chamber. °C 
-  float est_temp = 0; // Estimated temperature after hose. °C
-  float est_humidity = 0; // Estimated humidity after hose. RH%
-  float vapor_abs_humidity = 0; // Current absolute humidity at vapor chamber. g/m3
-  float est_abs_humidity = 0; // Estimated absolute humidity after hose. g/m3
-  float target_humidity = 0; // Target plate temperature. °C
-  float current_airflow = 0; // Air volumetric flow rate. Lts/min
-  float current_airspeed = 0; // Air speed. m/s
-  uint16_t fan_pwm = 0; // Fan PWM duty cycle.
-  float vapor_humidity = 0; // Current humidity at vapor chamber. RH%
-  uint16_t hose_pwm = 0; // Hose power PWM duty cycle.
-  float target_temp = 0; // Target temperature after hose. °C
-  float target_humidity = 0; // Target relative humidity after hose. %RH
-  float target_airflow = 0; // Target air flow. Lts/min
-  bool pwr_state = 0; // Machine on or off.next_dht_update
-  bool plate_relay_state = 0; // Plate on or off.
-  bool plate_relay_cmd = 0;
-  bool over_temp_flag = 0; // The flag is set whenever the vapor temp is getting too close to output temp.
-  Beeps current_beep;
-  uint16_t adc_therm = 0;
-  float them_resistance = 0;
 
-  //Handle Encoder in Debug MODE
-  y = encoder.getPosition();
+}
 
-  if (y<0)
-  {
-    encoder.setPosition(0);
-  }
-  view_port_init = encoder.getPosition();
-
-  sprintf(buffer, "T:%dC  RH:%3d%%  V:%2dL/min   ON  ", (int)vals->plate_temp, (int)vals->vapor_temp, (int)vals->est_temp,(int)vals->est_humidity, (int)vals->vapor_abs_humidity, (int)vals->,
-                                                        (int)vals->plate_temp, (int)vals->vapor_temp, (int)vals->est_temp);
-
-
-  if(millis>next_jahir_screen_update)
-  {
-    lcd_buffer_write_debug(buffer, sizeof(buffer),view_port_init);
-    next_jahir_screen_update = millis + 300;
-  }
-  return;
-  
-}*/
-
-void lcd_buffer_write(char buffer[32], uint16_t sizeof_buffer)
+void lcd_buffer_write(TempTarget *target)
 {
   #ifdef DEBUG
   Serial.print("LCD: ");
   Serial.println(buffer);
   #endif
-  for (int i=0; i<(sizeof_buffer/sizeof(char)); i++)
+  for (int i=0; i<(sizeof(target->buffer)/sizeof(char)); i++)
   {
     if(i<16) 
     {
       lcd.setCursor(i, 0);
-      lcd.print(buffer[i]);
+      lcd.print(target->buffer[i]);
     }
     else 
     {
       lcd.setCursor(i-16,1);
-      lcd.print(buffer[i]);
+      lcd.print(target->buffer[i]);
     }
   }
   return;
 }
-
-/*void lcd_buffer_write_debug(char buffer[200], uint16_t sizeof_buffer,uint16_t view_port_init)
-{
-  #ifdef DEBUG
-  Serial.print("LCD: ");
-  Serial.println(buffer);
-  #endif
-  for (int i=0; i<(sizeof_buffer/sizeof(char)); i++)
-  {
-    if(i<16) 
-    {
-      lcd.setCursor(i, 0);
-      lcd.print(buffer[i]);
-    }
-    else 
-    {
-      lcd.setCursor(i-16,1);
-      lcd.print(buffer[i]);
-    }
-  }
-  return;
-}*/
 
 void beep_manager(StateVals *vals)
 {
   Beeps current_beep = vals->current_beep;
   static uint16_t prev_beep_id;
   static uint32_t beep_once_timeout;
-  if(current_beep.beep_type == NO_BEEP && current_beep.beep_id != prev_beep_id)
-  {
-    digitalWrite(BUZZER_PIN, LOW);
-    prev_beep_id = current_beep.beep_id;
-  }
-  else if (current_beep.beep_type == BEEP_ONCE)
-  {
-    if(current_beep.beep_id != prev_beep_id)
-    {
-      digitalWrite(BUZZER_PIN, HIGH);
-      beep_once_timeout = millis() + BEEP_ONCE_DURATION;
-      prev_beep_id = current_beep.beep_id;
-    }
 
-    else if(millis()>beep_once_timeout)
+if((current_beep.beep_id != prev_beep_id) && millis()>beep_once_timeout)
+  {
+    digitalWrite(BUZZER_PIN, current_beep.beep_clock%2);
+    if (current_beep.beep_clock > 0)
     {
-      digitalWrite(BUZZER_PIN, LOW);
+      vals->current_beep.beep_clock--;
+      beep_once_timeout = millis() + BEEP_ONCE_DURATION;
+    }
+    else
+    {
+      prev_beep_id = current_beep.beep_id;
     }
   }
 }
 
+void beep_creator(StateVals *vals, BeepType beep_num)
+{
+  vals->current_beep.beep_id++;
+  vals->current_beep.beep_type=beep_num;
+  vals->current_beep.beep_clock = vals->current_beep.beep_type;
+}
 float arr_average(float arr[256], uint16_t size)
 {
   float sum = 0;
@@ -1015,7 +1390,38 @@ float integral_control(float i_control[256], uint16_t isize)
   return (sum);
 }
 
-void alarm_manager(StateVals &vals)
+void alarm_manager(StateVals *vals, Alarms *alarm)
 {
-
+  if(vals->plate_temp>MAX_PLATE_TEMP)
+  {
+    alarm->is_plate_too_hot = 1;
+  }
+  if(1)
+  {
+    alarm->is_ready_working = 1;
+  }
+  if(1)
+  {
+    alarm->is_setting_up = 1;
+  }
+  if(1)
+  {
+    alarm->is_in_stand_by = 1;
+  }
+    if(vals->plate_temp>MAX_PLATE_TEMP+20)
+  {
+    alarm->is_dry = 1;
+  }
+  if(vals->current_airflow > 100)
+  {
+    alarm->has_unusual_flow = 1;
+  }
+    if(1)
+  {
+    alarm->has_sensor_fault = 1;
+  }
+  if(1)
+  {
+    alarm->error = 1;
+  }
 }

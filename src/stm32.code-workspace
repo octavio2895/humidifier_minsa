@@ -1,0 +1,35 @@
+{
+	"folders": [
+		{
+			"path": ".."
+		},
+		{
+			"name": "humidifier_minsa_freertos",
+			"path": "../../Documents/PlatformIO/Projects/humidifier_minsa_freertos"
+		}
+	],
+	"settings": {
+		"files.associations": {
+			"*.tcc": "cpp",
+			"cmath": "cpp",
+			"numeric": "cpp",
+			"cinttypes": "cpp",
+			"cstdlib": "cpp",
+			"random": "cpp",
+			"functional": "cpp",
+			"type_traits": "cpp",
+			"exception": "cpp",
+			"algorithm": "cpp",
+			"fstream": "cpp",
+			"istream": "cpp",
+			"memory": "cpp",
+			"new": "cpp",
+			"ostream": "cpp",
+			"sstream": "cpp",
+			"streambuf": "cpp",
+			"string_view": "cpp",
+			"typeinfo": "cpp",
+			"utility": "cpp"
+		}
+	}
+}
