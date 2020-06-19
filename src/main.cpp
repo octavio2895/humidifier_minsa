@@ -42,6 +42,19 @@
 #include <math.h>
 //#include <Adafruit_SleepyDog.h>
 #include <IWatchdog.h>
+#include "gasboard7500E.h"
+#include <HardwareSerial.h>
+
+
+#ifdef O2SENSE_NEED_METADATA
+bool has_sernum = false;
+bool has_vernum = false;
+#endif
+
+HardwareSerial Serial3(PB11, PB10);
+
+// #define OUTPUT_BUFFER_SIZE 32
+// char output_buffer[OUTPUT_BUFFER_SIZE];
 
 // Physical properties
 #define DIAMETER                0.0177
@@ -90,6 +103,7 @@
 #define BEEP_UPDATE_DELAY       10
 #define BEEP_ONCE_DURATION      300
 #define ALARM_UPDATE_DELAY       10
+#define O2_UPDATE_DELAY         200
 
 //PID Values
 #define KP_PD_HUM               3.5
@@ -119,7 +133,7 @@
 
 // Globlas
 const float zeroWindAdjustment =  .2;
-uint32_t next_flow_update, next_termistor_update, next_dht_update, next_flow_estimation, next_bangbang_control, next_pidfan_control, next_pid_update, next_execute, next_encoder_update, next_screen_update, next_beep_update, next_alarm_update;
+uint32_t next_flow_update, next_termistor_update, next_dht_update, next_flow_estimation, next_bangbang_control, next_pidfan_control, next_pid_update, next_execute, next_encoder_update, next_screen_update, next_beep_update, next_alarm_update, next_o2_update;
 float kpa, kph;
 
 // Structs
@@ -170,8 +184,12 @@ struct StateVals
   bool pwr_state = 0; // Machine on or off.next_dht_update
   bool plate_relay_state = 0; // Plate on or off.
   bool plate_relay_cmd = 0;
+  uint16_t o2_concentration = 0;
+  uint16_t o2_flow = 0;
+  uint16_t o2_temp = 0;
+  uint16_t o2_test = 0;
   uint32_t clock = 0;
-  
+  char o2_buffer[64];
   Beeps current_beep;
   uint16_t adc_therm = 0;
   float them_resistance = 0;
@@ -261,6 +279,7 @@ void manage_cursor(StateVals *vals);
 void read_flow_old(StateVals *vals);
 void alarm_manager(StateVals *vals, Alarms *alarm);
 void flow_to_PWM(StateVals *vals);
+void read_o2(StateVals *vals, TempTarget *target);
 
 //void lcd_buffer_write_debug(char buffer [200],uint16_t buffer_size,uint16_t view_port_init);
 
@@ -268,6 +287,9 @@ void flow_to_PWM(StateVals *vals);
 
 void setup() 
 {
+
+
+
 // // Make custom characters:
  byte Heat1[] = {
   
@@ -356,7 +378,16 @@ byte Skull[] = {
   attachInterrupt(digitalPinToInterrupt(PIN_A), encoderISR, CHANGE);
   attachInterrupt(digitalPinToInterrupt(PIN_B), encoderISR, CHANGE);
   
+  #ifdef O2SENSE_NEED_METADATA
+  const uint8_t cmd_vernum[] = {O2SENSE_CMD_VERSIONNUMBER};
+  const uint8_t cmd_sernum[] = {O2SENSE_CMD_SERIALNUMBER};
+  #endif
+
+  o2sens_init();
+  Serial3.begin(9600);
+
   //Boot up sequence
+  analogWrite(FAN_PIN, 0);
   digitalWrite(PLATE_RELAY_PIN, HIGH);
   digitalWrite(BUZZER_PIN, HIGH);
   sprintf(target->buffer, "Humidifier v1.00FABLAB-MINSA-UTP");
@@ -383,7 +414,7 @@ void loop()
 {
   StateVals *vals = &state_vals;
   Alarms *alarm = &les_alarms;
-  static bool next_beep_overflow_flag = false, flow_estimate_overflow_flag = false, thermistor_update_overflow_flag = false, dht_update_overflow_flag = false, next_estimation_overflow_flag = false, next_bangbang_overflow_flag = false, next_pidfan_overflow_flag = false, pid_update_overflow_flag = false, next_execute_overflow_flag = false, next_encoder_overflow_flag = false, screen_update_overflow_flag = false, next_alarm_overflow_flag = false;
+  static bool next_beep_overflow_flag = false, flow_estimate_overflow_flag = false, thermistor_update_overflow_flag = false, dht_update_overflow_flag = false, next_estimation_overflow_flag = false, next_bangbang_overflow_flag = false, next_pidfan_overflow_flag = false, pid_update_overflow_flag = false, next_execute_overflow_flag = false, next_encoder_overflow_flag = false, screen_update_overflow_flag = false, next_alarm_overflow_flag = false, o2_update_overflow_flag = false;
 
   if (!next_beep_overflow_flag)
   {
@@ -438,6 +469,15 @@ void loop()
       if(next_dht_update < millis()) dht_update_overflow_flag = true;
     }
   else if(millis() < next_dht_update) dht_update_overflow_flag = false;
+  
+  if (!o2_update_overflow_flag)
+    if (millis() > next_o2_update) 
+    {
+      read_o2(&state_vals, &target_vals);
+      next_o2_update = millis() + O2_UPDATE_DELAY;
+      if(next_o2_update < millis()) o2_update_overflow_flag = true;
+    }
+  else if(millis() < next_o2_update) o2_update_overflow_flag = false;
 
   if (!next_estimation_overflow_flag)
   {
@@ -991,6 +1031,33 @@ void read_flow_old(StateVals *vals)
 
 }
 
+void read_o2(StateVals *vals, TempTarget *target)
+{
+  analogWrite(FAN_PIN, 0);
+   if (Serial3.available()) // at least 1 byte from UART arrived
+  {
+    if(vals->o2_test%1000>19)
+    {
+      //o2sens_init();
+      vals->o2_test = 0;
+      //o2sens_clearNewData(); // clear the new packet flag
+    }
+    //vals->o2_buffer = o2sens_getRawBuffer();
+
+    o2sens_feedUartByte(Serial3.read()); // give byte to the parser
+    vals->o2_test = vals->o2_test + 1;
+    if (o2sens_hasNewData()) // a complete packet has been processed
+    {
+      o2sens_clearNewData(); // clear the new packet flag
+      vals->o2_test = vals->o2_test + 1000 - 12;
+      vals->o2_concentration = o2sens_getConcentration16();
+      vals->o2_flow = o2sens_getFlowRate16();
+      vals->o2_temp = o2sens_getTemperature16();
+      
+    }
+  }
+}
+
 void read_encoder_button(StateVals *vals, TempTarget *target)
 {
   button1.Update();
@@ -1174,15 +1241,39 @@ void write_config_menu(StateVals *vals, TempTarget *target)
 
 void write_main_menu(StateVals *vals, TempTarget *target)
 {
-  if(vals->pwr_state) 
-  {
-    sprintf(target->buffer, "%c%2d%cC   %c%3d%%   V:%2dL/min  ON   ", byte(0), (int)vals->vapor_temp, byte(2), byte(1), (int)vals->vapor_humidity, (int)vals->current_airflow);
-  }
-  else
-  {
-    sprintf(target->buffer, "%c%2d%cC   %c%3d%%   V:%2dL/min  OFF  ", byte(0), (int)vals->vapor_temp, byte(2), byte(1), (int)vals->vapor_humidity, (int)vals->current_airflow);
-  } 
+  static bool is_state = 1;
+  static uint8_t counter = 0;
+  // if(vals->pwr_state && is_state) 
+  // {
+  //   sprintf(target->buffer, "%c%2d%cC   %c%3d%%   V:%2dL/min  ON   ", byte(0), (int)vals->vapor_temp, byte(2), byte(1), (int)vals->vapor_humidity, (int)vals->current_airflow);
+  // }
+  // else if (is_state)
+  // {
+  //   sprintf(target->buffer, "%c%2d%cC   %c%3d%%   V:%2dL/min  OFF  ", byte(0), (int)vals->vapor_temp, byte(2), byte(1), (int)vals->vapor_humidity, (int)vals->current_airflow);
+  // }
+  // else
+  //{
+  sprintf(target->buffer, "O2:%d Flow:%d %12d %d     ",(int)vals->o2_concentration,(int)vals->o2_flow,(int)vals->o2_buffer,(int)vals->o2_test);
+    //sprintf(target->buffer, "%02X                                                  ",vals->o2_buffer);
+    //sprintf(target->buffer, "%d                                                  ",(int)vals->o2_buffer);
+  //}
+   
   lcd_buffer_write(&target_vals);
+  // counter++;
+  // if(is_state)
+  // {
+  //   counter++;
+  //   counter++;
+  //   counter++;
+  // }
+  // if (counter>10)
+  // {
+  //   is_state = !is_state;
+  //   counter = 0;
+  // }
+
+
+
 }
 
 void write_debug_menu(StateVals *vals, TempTarget *target)
