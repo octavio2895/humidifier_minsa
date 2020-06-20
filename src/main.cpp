@@ -103,11 +103,12 @@ HardwareSerial Serial3(PB11, PB10);
 #define BEEP_UPDATE_DELAY       10
 #define BEEP_ONCE_DURATION      300
 #define ALARM_UPDATE_DELAY       10
-#define O2_UPDATE_DELAY         200
+#define O2_UPDATE_DELAY         0
 
 //PID Values
 #define KP_PD_HUM               3.5
 #define KD_PD_HUM               0
+#define KP_PD_TEMP              7
 #define PERIODO                 2000
 #define KP_FAN                  0
 #define KD_FAN                  0
@@ -135,6 +136,7 @@ HardwareSerial Serial3(PB11, PB10);
 const float zeroWindAdjustment =  .2;
 uint32_t next_flow_update, next_termistor_update, next_dht_update, next_flow_estimation, next_bangbang_control, next_pidfan_control, next_pid_update, next_execute, next_encoder_update, next_screen_update, next_beep_update, next_alarm_update, next_o2_update;
 float kpa, kph;
+byte print_command[] = {0x11,0x1,0x1,0xED};
 
 // Structs
 
@@ -287,20 +289,28 @@ void read_o2(StateVals *vals, TempTarget *target);
 
 void setup() 
 {
-
-
-
 // // Make custom characters:
- byte Heat1[] = {
+ byte Fi[] = {
   
-  B11011,
+  B11110,
+  B10000,
+  B10001,
+  B11100,
   B10001,
   B10001,
-  B00010,
-  B00010,
+  B10001,
+  B00000
+};
+ byte o2[] = {
+  
+  B11100,
+  B10100,
+  B10100,
+  B11111,
+  B00001,
+  B00111,
   B00100,
-  B10001,
-  B11111
+  B00111
 };
 byte Water[] = {
   B00100,
@@ -372,6 +382,8 @@ byte Skull[] = {
   lcd.createChar(1, Water);
   lcd.createChar(2, Grade);
   lcd.createChar(3, Bug);
+  lcd.createChar(4, Fi);
+  lcd.createChar(5, o2);
 
   encoder.begin();
   dht.begin();
@@ -384,7 +396,7 @@ byte Skull[] = {
   #endif
 
   o2sens_init();
-  Serial3.begin(9600);
+  Serial3.begin(9600,SERIAL_8N2);
 
   //Boot up sequence
   analogWrite(FAN_PIN, 0);
@@ -462,22 +474,20 @@ void loop()
   else if(millis() < next_flow_update) thermistor_update_overflow_flag = false;
 
   if (!dht_update_overflow_flag)
+  {
     if (millis() > next_dht_update) 
     {
       read_dht(&state_vals);
       next_dht_update = millis() + DHT_UPDATE_DELAY;
       if(next_dht_update < millis()) dht_update_overflow_flag = true;
     }
+  }
   else if(millis() < next_dht_update) dht_update_overflow_flag = false;
   
-  if (!o2_update_overflow_flag)
-    if (millis() > next_o2_update) 
-    {
-      read_o2(&state_vals, &target_vals);
-      next_o2_update = millis() + O2_UPDATE_DELAY;
-      if(next_o2_update < millis()) o2_update_overflow_flag = true;
-    }
-  else if(millis() < next_o2_update) o2_update_overflow_flag = false;
+  while (Serial3.available())
+  {
+    read_o2(&state_vals, &target_vals);
+  }
 
   if (!next_estimation_overflow_flag)
   {
@@ -622,7 +632,7 @@ void estimate_flow(StateVals *vals)
 void control_PD_humidity(StateVals *vals)
 {
   static float error_humidity_current;
-  static float error_humidity_old;
+  static float error_humidity_old, error_air_temp;
   static float delta_error_humidity_current;
   float current_step = millis()%PERIODO;
   static float old_millis;
@@ -631,9 +641,10 @@ void control_PD_humidity(StateVals *vals)
   //Read error values
   error_humidity_current = vals->target_humidity - vals->vapor_humidity;
   delta_error_humidity_current = (error_humidity_current - error_humidity_old)/(millis()-old_millis);
+  error_air_temp = vals->target_temp - vals->vapor_temp;
 
   //Write new Duty Cycle value
-  vals->duty_cycle = (KP_PD_HUM * error_humidity_current + KD_PD_HUM * delta_error_humidity_current);
+  vals->duty_cycle = (KP_PD_HUM * error_humidity_current + KP_PD_TEMP * error_air_temp);
   
   //Overwrite old error values
   error_humidity_old = error_humidity_current;
@@ -680,6 +691,7 @@ void control_SMC_temp (StateVals *vals)
   current_millis = millis();
   pendiente = (vals->plate_temp-temp_old)/(current_millis-old_millis);
   error_temp = vals->target_humidity - vals->plate_temp;
+
 
     
   if(pendiente < KP_SMC*error_temp)
@@ -863,7 +875,7 @@ void execute(StateVals *vals)
   #endif
   if(vals->pwr_state)
   {
-    if(vals->vapor_temp >= vals->target_temp)
+    if(vals->vapor_temp > vals->target_temp+1)
     {
       vals->is_vapor_too_hot = 1;
     } 
@@ -1033,29 +1045,27 @@ void read_flow_old(StateVals *vals)
 
 void read_o2(StateVals *vals, TempTarget *target)
 {
-  analogWrite(FAN_PIN, 0);
-   if (Serial3.available()) // at least 1 byte from UART arrived
+    // at least 1 byte from UART arrived
+  if(vals->o2_test%100>19)
   {
-    if(vals->o2_test%1000>19)
-    {
-      //o2sens_init();
-      vals->o2_test = 0;
-      //o2sens_clearNewData(); // clear the new packet flag
-    }
-    //vals->o2_buffer = o2sens_getRawBuffer();
-
-    o2sens_feedUartByte(Serial3.read()); // give byte to the parser
-    vals->o2_test = vals->o2_test + 1;
-    if (o2sens_hasNewData()) // a complete packet has been processed
-    {
-      o2sens_clearNewData(); // clear the new packet flag
-      vals->o2_test = vals->o2_test + 1000 - 12;
-      vals->o2_concentration = o2sens_getConcentration16();
-      vals->o2_flow = o2sens_getFlowRate16();
-      vals->o2_temp = o2sens_getTemperature16();
-      
-    }
+    //o2sens_init();
+    //vals->o2_test = 0;
+    //o2sens_clearNewData(); // clear the new packet flag
   }
+  //vals->o2_buffer = o2sens_getRawBuffer();
+
+  o2sens_feedUartByte(Serial3.read()); // give byte to the parser
+  vals->o2_test = vals->o2_test + 1;
+  if (o2sens_hasNewData()) // a complete packet has been processed
+  {
+    o2sens_clearNewData(); // clear the new packet flag
+    vals->o2_test = vals->o2_test + 100 -12;
+    vals->o2_concentration = o2sens_getConcentration16();
+    vals->o2_flow = o2sens_getFlowRate16();
+    vals->o2_temp = o2sens_getTemperature16(); 
+  }
+  
+  vals->o2_test = vals->o2_test + 2;
 }
 
 void read_encoder_button(StateVals *vals, TempTarget *target)
@@ -1241,19 +1251,19 @@ void write_config_menu(StateVals *vals, TempTarget *target)
 
 void write_main_menu(StateVals *vals, TempTarget *target)
 {
-  static bool is_state = 1;
-  static uint8_t counter = 0;
-  // if(vals->pwr_state && is_state) 
-  // {
-  //   sprintf(target->buffer, "%c%2d%cC   %c%3d%%   V:%2dL/min  ON   ", byte(0), (int)vals->vapor_temp, byte(2), byte(1), (int)vals->vapor_humidity, (int)vals->current_airflow);
-  // }
-  // else if (is_state)
-  // {
-  //   sprintf(target->buffer, "%c%2d%cC   %c%3d%%   V:%2dL/min  OFF  ", byte(0), (int)vals->vapor_temp, byte(2), byte(1), (int)vals->vapor_humidity, (int)vals->current_airflow);
-  // }
+  // static bool is_state = 1;
+  // static uint8_t counter = 0;
+  if(vals->pwr_state) 
+  {
+    sprintf(target->buffer, "%c%2d%cC   %c%3d%%   %2dLPM %c%c:%2d%% ON ", byte(0), (int)vals->vapor_temp, byte(2), byte(1), (int)vals->vapor_humidity, (int)vals->current_airflow, byte(4), byte(5),(int)vals->o2_concentration/10);
+  }
+  else
+  {
+    sprintf(target->buffer, "%c%2d%cC   %c%3d%%   %2dLPM %c%c:%2d%% OFF", byte(0), (int)vals->vapor_temp, byte(2), byte(1), (int)vals->vapor_humidity, (int)vals->current_airflow, byte(4), byte(5),(int)vals->o2_concentration/10);
+  }
   // else
   //{
-  sprintf(target->buffer, "O2:%d Flow:%d %12d %d     ",(int)vals->o2_concentration,(int)vals->o2_flow,(int)vals->o2_buffer,(int)vals->o2_test);
+  //sprintf(target->buffer, "O2:%d Flow:%d   %d                                 ",(int)vals->o2_concentration,(int)vals->o2_flow,(int)vals->o2_test);
     //sprintf(target->buffer, "%02X                                                  ",vals->o2_buffer);
     //sprintf(target->buffer, "%d                                                  ",(int)vals->o2_buffer);
   //}
@@ -1271,9 +1281,6 @@ void write_main_menu(StateVals *vals, TempTarget *target)
   //   is_state = !is_state;
   //   counter = 0;
   // }
-
-
-
 }
 
 void write_debug_menu(StateVals *vals, TempTarget *target)
