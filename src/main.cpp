@@ -128,7 +128,7 @@ HardwareSerial Serial3(PB11, PB10);
 #define POSY4                   1
 
 //Alarm critical values
-#define MAX_PLATE_TEMP          130
+#define MAX_PLATE_TEMP          115
 #define MAX_V                   101//101: mapped mode; 41: L/min mode
 
 
