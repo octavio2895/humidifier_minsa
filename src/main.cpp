@@ -137,7 +137,7 @@ HardwareSerial Serial3(PB11, PB10);
 
 //Alarm critical values
 #define MAX_PLATE_TEMP          150
-#define MAX_V                   41//101: mapped mode; 41: L/min mode
+#define MAX_V                   101//101: mapped mode; 41: L/min mode
 
 
 // Globlas
@@ -210,6 +210,7 @@ struct StateVals
   float set_PWM = 0;
   float set_o2_flow = 0;
   bool hose_state = 0;
+
 
   uint16_t adc_flow_t = 0;
   uint16_t adc_flow_v = 0;
@@ -570,9 +571,9 @@ void loop()
   {
     if (millis() > next_pidfan_control) 
     {
-      curve_control_FAN(&state_vals);
+      //curve_control_FAN(&state_vals);
       //control_PID_Fan(&state_vals);
-      //mapped_fan_control(&state_vals);
+      mapped_fan_control(&state_vals);
       next_pidfan_control = millis() + PID_FAN_CONTROL_DELAY;
       if(next_pidfan_control < millis()) next_pidfan_overflow_flag = true;
     }
@@ -644,14 +645,20 @@ void estimate_flow(StateVals *vals)
   #ifdef DEBUG
   Serial.println("Estimating flow...");
   #endif
-  vals->vapor_abs_humidity = (6.112*exp((17.67*vals->vapor_temp)/(vals->vapor_temp + 243.5))*(vals->vapor_humidity/100)*2.1674)/(273.15+vals->vapor_temp); //[g/m³]
+  vals->vapor_abs_humidity = (6.112*exp((17.67*vals->vapor_temp)/(vals->vapor_temp + 243.5))*(vals->vapor_humidity)*2.1674)/(273.15+vals->vapor_temp); //[g/m³]
   float entry_density = get_density(vals->vapor_temp);
   float exit_density = get_density(vals->after_hose_temp);
-  float air_mass_flow = entry_density*vals->current_airflow;
-  float water_mass_flow = air_mass_flow*vals->vapor_abs_humidity;
-  vals->est_abs_humidity = water_mass_flow/(air_mass_flow*exit_density);
-  vals->est_humidity = ((273.15+vals->vapor_temp)*vals->est_abs_humidity)/(6.112*exp((17.67*vals->vapor_temp)/(vals->vapor_temp + 243.5))*2.1674);
-
+  // float air_mass_flow = entry_density*vals->current_airflow;
+  // //float water_mass_flow = air_mass_flow*vals->vapor_abs_humidity;
+  // float water_mass_flow = vals->current_airflow * vals->vapor_abs_humidity;
+  // float exit_airflow = air_mass_flow/exit_density;
+  //vals->est_abs_humidity = water_mass_flow/(air_mass_flow*exit_density);
+  vals->est_abs_humidity = vals->vapor_abs_humidity * exit_density/entry_density; //water_mass_flow/exit_airflow;
+  // if(vals->current_airflow <= 0)
+  // {
+  //   vals->est_abs_humidity = vals->vapor_abs_humidity;
+  // }  
+  vals->est_humidity = ((273.15+vals->after_hose_temp)*vals->est_abs_humidity)/(6.112*exp((17.67*vals->after_hose_temp)/(vals->after_hose_temp + 243.5))*2.1674);
 
   #ifdef DEBUG
   char serial_buff[100];
@@ -1142,7 +1149,7 @@ void read_encoder_button(StateVals *vals, TempTarget *target)
     }
     else if(vals->is_config_mode)
     {
-      vals->is_possible_condition = 0;
+      vals->is_possible_condition = 1; // Set to 0 when using curve control mode
       check_fio2_flow(vals,target);
       if(vals->is_possible_condition)
       {
@@ -1383,7 +1390,7 @@ void write_debug_menu(StateVals *vals, TempTarget *target)
         sprintf(target->buffer, "%c HOSE_TEMP:%3d PL_T:%2d OVR_T:%d",byte(3),(int)vals->after_hose_temp, (int)vals->plate_temp, (int)vals->is_over_temp_flag ); //adC TERMISTOR,  temp plato, velocidad,
         break;
       case DOWN_MIDDLE:
-        sprintf(target->buffer, "%c HOSE_TEMP:%3d RH:%2d HOSE_ST:%d%c",byte(3),(int)vals->after_hose_temp,(int)vals->est_humidity,(int)vals->hose_state,byte(3));
+        sprintf(target->buffer, "%c HOSE_TEMP:%3d RH:%2d HOSE_ST:%d%c",byte(3),(int)vals->after_hose_temp,(int)(vals->est_humidity),(int)vals->hose_state,byte(3));
         break;  
       case DOWN_RIGHT:
         sprintf(target->buffer, "%c ADC_T:%d ADC_V:%2d PWM:%3d %c",byte(3),(int)vals->adc_flow_t,(int)vals->adc_flow_v,(int)vals->fan_pwm,byte(3));
@@ -1582,7 +1589,7 @@ void read_ds18b20(StateVals *vals)
 
 void hose_bang_bang(StateVals *vals)
 {
-  if(vals->after_hose_temp < vals->target_temp)
+  if(vals->after_hose_temp <= vals->target_temp)
   {
     vals->hose_state = 1;
   }
@@ -1590,4 +1597,24 @@ void hose_bang_bang(StateVals *vals)
   {
     vals->hose_state = 0;
   } 
+}
+
+void get_target_temperature(State *vals)
+{
+
+  vals->vapor_abs_humidity = (6.112*exp((17.67*vals->vapor_temp)/(vals->vapor_temp + 243.5))*(vals->vapor_humidity)*2.1674)/(273.15+vals->vapor_temp); //[g/m³]
+  float entry_density = get_density(vals->vapor_temp);
+  float exit_density = get_density(vals->after_hose_temp);
+  // float air_mass_flow = entry_density*vals->current_airflow;
+  // //float water_mass_flow = air_mass_flow*vals->vapor_abs_humidity;
+  // float water_mass_flow = vals->current_airflow * vals->vapor_abs_humidity;
+  // float exit_airflow = air_mass_flow/exit_density;
+  //vals->est_abs_humidity = water_mass_flow/(air_mass_flow*exit_density);
+  vals->est_abs_humidity = vals->vapor_abs_humidity * exit_density/entry_density; //water_mass_flow/exit_airflow;
+  // if(vals->current_airflow <= 0)
+  // {
+  //   vals->est_abs_humidity = vals->vapor_abs_humidity;
+  // }  
+  vals->est_humidity = ((273.15+vals->after_hose_temp)*vals->est_abs_humidity)/(6.112*exp((17.67*vals->after_hose_temp)/(vals->after_hose_temp + 243.5))*2.1674);
+
 }
