@@ -114,7 +114,7 @@ HardwareSerial Serial3(PB11, PB10);
 //PID Values
 #define KP_PD_HUM               3.5
 #define KD_PD_HUM               0
-#define KP_PD_TEMP              7
+#define KP_PD_TEMP              8.5
 #define KP_PD_TEMP_MOD          3
 #define PERIODO                 2000
 #define KP_FAN                  0
@@ -237,7 +237,7 @@ struct TempTarget
   uint16_t target_temp = 28;
   uint16_t target_humidity;
   uint16_t target_v;
-  uint16_t target_fio2 = 30;
+  uint16_t target_fio2 = 21;
   bool target_st;
   bool is_init_encoder_position;
   uint32_t encoder_position;
@@ -246,7 +246,7 @@ struct TempTarget
   char range_rh[101];
   char range_v[MAX_V]; //Previously 41
   char range_st[4] = {0,0,1,1};
-  char range_fio2[51];
+  char range_fio2[55];
 
 
 }target_vals;
@@ -720,7 +720,7 @@ void control_PD_humidity(StateVals *vals)
   error_air_temp = vals->target_temp - vals->vapor_temp;
 
   //Write new Duty Cycle value
-  vals->duty_cycle = (KP_PD_HUM * error_humidity_current + (KP_PD_TEMP+KP_PD_TEMP_MOD*vals->set_o2_flow/60) * error_air_temp);
+  vals->duty_cycle = (KP_PD_HUM * error_humidity_current + (KP_PD_TEMP+KP_PD_TEMP_MOD*vals->set_o2_flow/40) * error_air_temp);
   
   //Overwrite old error values
   error_humidity_old = error_humidity_current;
@@ -1066,13 +1066,14 @@ void read_flow(StateVals *vals)
   speed_num++; 
 
  
-  if (speed_num >= 10)
+  if (speed_num > 10)
   {
     x_prom = arr_average(x_array, sizeof(x_array));
     y_prom = arr_average(y_array, sizeof(y_array));
     //sensor_airspeed =  1.133423908e-4f * x_prom*x_prom - 1.159148562e-4f * x_prom*y_prom -  7.96225819e-6f * y_prom*y_prom -  6.244728852e-2f * x_prom + 8.898163594e-2f * y_prom - 13.26006647;
     //sensor_airspeed = 8.425983316e-4f  * x_prom*x_prom - 1.175031223e-3f * x_prom*y_prom + 4.294234517e-4f * y_prom*y_prom - 1.268141388e-1f * x_prom + 8.589904629e-2f * y_prom - 4.817979033f;
-    sensor_airspeed =  2.07278786e-7 *x_prom*x_prom*x_prom*x_prom - 1.258160808e-6 *x_prom*x_prom*x_prom*y_prom + 2.329122632e-6 *x_prom*x_prom*y_prom*y_prom - 1.684204298e-6 *x_prom* y_prom*y_prom*y_prom + 4.161528134e-7 *y_prom*y_prom*y_prom*y_prom + 1.865690411e-4 *x_prom*x_prom*x_prom - 2.397625704e-4 *x_prom*x_prom*y_prom - 1.05055706e-4 *x_prom*y_prom*y_prom + 1.293264445e-4 *y_prom*y_prom*y_prom - 1.107078016e-1 *x_prom*x_prom + 2.173253746e-1 *x_prom* y_prom - 7.790431822e-2 *y_prom*y_prom + 5.091561295 *x_prom - 17.07396366 *y_prom + 1779.975948;
+    //sensor_airspeed =  2.07278786e-7 *x_prom*x_prom*x_prom*x_prom - 1.258160808e-6 *x_prom*x_prom*x_prom*y_prom + 2.329122632e-6 *x_prom*x_prom*y_prom*y_prom - 1.684204298e-6 *x_prom* y_prom*y_prom*y_prom + 4.161528134e-7 *y_prom*y_prom*y_prom*y_prom + 1.865690411e-4 *x_prom*x_prom*x_prom - 2.397625704e-4 *x_prom*x_prom*y_prom - 1.05055706e-4 *x_prom*y_prom*y_prom + 1.293264445e-4 *y_prom*y_prom*y_prom - 1.107078016e-1 *x_prom*x_prom + 2.173253746e-1 *x_prom* y_prom - 7.790431822e-2 *y_prom*y_prom + 5.091561295 *x_prom - 17.07396366 *y_prom + 1779.975948;
+    sensor_airspeed =  -1.056891481e-5 *x_prom*x_prom*x_prom + 3.245687769e-5 *x_prom*x_prom * y_prom - 3.605536507e-5 *x_prom *y_prom*y_prom + 1.138111633e-5 *y_prom*y_prom*y_prom + 2.436108257e-3 *x_prom*x_prom - 1.102028777e-3 *x_prom*y_prom + 3.695040756e-3 *y_prom*y_prom - 1.163719965 *x_prom - 1.820651701 *y_prom + 580.7883239;
     speed_num = 0;
   }
 
@@ -1261,7 +1262,7 @@ void write_config_menu(StateVals *vals, TempTarget *target)
   static uint32_t value_encoder;
   
   //Rango de los cases
-  static char cases[5] = {21,101,MAX_V,51,4}; //3rd value prev 41isnan
+  static char cases[5] = {21,101,MAX_V,55,4}; //3rd value prev 41isnan
 
   static char lcd_st[3][4] = {"OFF","ON "};
 
@@ -1280,7 +1281,7 @@ void write_config_menu(StateVals *vals, TempTarget *target)
   }
   for(int i=0;i<sizeof(target->range_fio2);i++)
   {
-    target->range_fio2[i] = i+30;
+    target->range_fio2[i] = i+21;
   }
   
   if(target->is_init_encoder_position)
@@ -1371,36 +1372,23 @@ void write_config_menu(StateVals *vals, TempTarget *target)
 
 void write_main_menu(StateVals *vals, TempTarget *target)
 {
-  // static bool is_state = 1;
-  // static uint8_t counter = 0;
+  //TODO: fix - this shouldn't be here
+  float printed_est_humidity = vals->est_humidity;
+  if(vals->est_humidity > 100)
+  {
+    printed_est_humidity = 100;
+  }
+
   if(vals->pwr_state) 
   {
-    sprintf(target->buffer, "%c%2d%cC %c%3d%% %c:%2d%2dLPM %c%c:%2d%% ON ", byte(0), (int)vals->after_hose_temp, byte(2), byte(1), (int)vals->est_humidity, byte(5), (int)vals->set_o2_flow, (int)vals->current_airflow, byte(4), byte(5),(int)vals->o2_concentration/10);
+    sprintf(target->buffer, "%c%2d%cC %c%3d%% %c:%2d%2dLPM %c%c:%2d%% ON ", byte(0), (int)vals->after_hose_temp, byte(2), byte(1), (int)printed_est_humidity, byte(5), (int)vals->set_o2_flow, (int)vals->current_airflow, byte(4), byte(5),(int)vals->o2_concentration/10);
   }
   else
   {
-    sprintf(target->buffer, "%c%2d%cC %c%3d%% %c:%2d%2dLPM %c%c:%2d%% OFF", byte(0), (int)vals->after_hose_temp, byte(2), byte(1), (int)vals->est_humidity, byte(5), (int)vals->set_o2_flow, (int)vals->current_airflow, byte(4), byte(5),(int)vals->o2_concentration/10);
+    sprintf(target->buffer, "%c%2d%cC %c%3d%% %c:%2d%2dLPM %c%c:%2d%% OFF", byte(0), (int)vals->after_hose_temp, byte(2), byte(1), (int)printed_est_humidity, byte(5), (int)vals->set_o2_flow, (int)vals->current_airflow, byte(4), byte(5),(int)vals->o2_concentration/10);
   }
-  // else
-  //{
-  //sprintf(target->buffer, "O2:%d Flow:%d   %d                                 ",(int)vals->o2_concentration,(int)vals->o2_flow,(int)vals->o2_test);
-    //sprintf(target->buffer, "%02X                                                  ",vals->o2_buffer);
-    //sprintf(target->buffer, "%d                                                  ",(int)vals->o2_buffer);
-  //}
    
   lcd_buffer_write(&target_vals);
-  // counter++;
-  // if(is_state)
-  // {
-  //   counter++;
-  //   counter++;
-  //   counter++;
-  // }
-  // if (counter>10)
-  // {
-  //   is_state = !is_state;
-  //   counter = 0;
-  // }
 }
 
 void write_debug_menu(StateVals *vals, TempTarget *target)
@@ -1412,7 +1400,7 @@ void write_debug_menu(StateVals *vals, TempTarget *target)
         sprintf(target->buffer, "%c CMD:%2d  %4d   Clk:%d  DC:%3d %c", byte(3),(int)vals->plate_relay_cmd,millis()%PERIODO, (int)vals->current_beep.beep_clock, (int)vals->duty_cycle,byte(3));
         break;
       case TOP_RIGHT:
-        sprintf(target->buffer, "%c Flow:%2dL/min vTMP:%3d PWM:%3d%c",byte(3),(int)vals->current_airflow,(int)vals->vapor_target_temp,(int)vals->fan_pwm,byte(3)); // overtempplat ,cuando el termistor fuerza que se apague
+        sprintf(target->buffer, "%c Flow:%2dL/min vTMP:%3d eRH:%3d%c",byte(3),(int)vals->current_airflow,(int)vals->vapor_target_temp,(int)vals->est_humidity,byte(3)); // overtempplat ,cuando el termistor fuerza que se apague
         break;
       case DOWN_LEFT:
         sprintf(target->buffer, "%c HOSE_TEMP:%3d PL_T:%2d OVR_T:%d",byte(3),(int)vals->after_hose_temp, (int)vals->plate_temp, (int)vals->is_over_temp_flag ); //adC TERMISTOR,  temp plato, velocidad,
@@ -1569,7 +1557,7 @@ void check_fio2_flow(StateVals *vals, TempTarget *target)
   {
     for(int i=0;i<=100;i++)
     {
-      x = i;
+      x = (100-i);
       //O2 -> 0 LPM
       y[0] = 1.582528729e-4 *x*x*x - 3.774840906e-2 *x*x + 3.038936694 *x - 56.56627272;
       z[0] = 21;
@@ -1598,9 +1586,9 @@ void check_fio2_flow(StateVals *vals, TempTarget *target)
       y[8] = -6.476451903e-5 *x*x*x + 9.087696887e-3 *x*x - 1.324249364e-1 *x + 21.1368989;
       z[8] = 2.691775272e-5 *x*x*x - 4.215288196e-3 *x*x + 7.232841773e-2 *x + 61.56778182;
 
-      if(target->target_v <= y[j] + 2 || target->target_v <= y[j] - 2)
+      if(target->target_v <= y[j] + 2 && target->target_v >= y[j] - 2)
       {
-        if(target->target_fio2 <= z[j] + 2 || target->target_fio2 <= z[j] - 2)
+        if(target->target_fio2 <= z[j] + 2 && target->target_fio2 >= z[j] - 2)
         {
           vals->is_possible_condition = 1;
           vals->set_o2_flow = j*5;
@@ -1626,7 +1614,7 @@ void check_fio2_flow_old(StateVals *vals, TempTarget *target)
     
     for(int i=0;i<=100;i++)
     {
-      x = i;
+      x = (100-i);
       //O2 -> 10 LPM
       y[0] = -5.761233482e-4 *x*x + 2.292232151e-1 *x + 4.703760328;
       z[0] = 6.441030951e-3 *x*x - 1.038880874 *x + 72.09203463;
@@ -1646,9 +1634,9 @@ void check_fio2_flow_old(StateVals *vals, TempTarget *target)
       y[5] = 6.36747219e-5 *x*x + 3.536708861e-2 *x + 30.00741849;
       z[5] = 3.797982324e-6 *x*x*x*x - 8.939263435e-4 *x*x*x + 7.168073609e-2 *x*x - 2.286923337 *x + 83.33174893;
 
-      if(target->target_v <= y[j] + 2 || target->target_v <= y[j] - 2)
+      if(target->target_v <= y[j] + 2 && target->target_v >= y[j] - 2)
       {
-        if(target->target_fio2 <= z[j] + 2 || target->target_fio2 <= z[j] - 2)
+        if(target->target_fio2 <= z[j] + 2 && target->target_fio2 >= z[j] - 2)
         {
           vals->is_possible_condition = 1;
           vals->set_o2_flow = 10 + j*10;
@@ -1691,14 +1679,14 @@ void get_target_temperature(StateVals *vals)
   float target_abs_humidity = (6.112*exp((17.67*vals->target_temp)/(vals->target_temp + 243.5))*(vals->target_humidity)*2.1674)/(273.15+vals->target_temp); //[g/m³]
   
   //Calculate target vapor temp
-  for (int i=28;i<=38;i++)
+  for (int i=20;i<=38;i++)
   {
     target_vapor_temp = i;
     est_target_abs_humidity = (6.112*exp((17.67*target_vapor_temp)/(target_vapor_temp + 243.5))*(vals->vapor_humidity)*2.1674)/(273.15+target_vapor_temp); //[g/m³]
     //Calculate error humidity
     error_humidity = 100*(target_abs_humidity - est_target_abs_humidity)/target_abs_humidity;
 
-    if(error_humidity <= 5 )
+    if(error_humidity <= 5 && error_humidity >= -5)
     {
       vals->vapor_target_temp = target_vapor_temp;
       return;
@@ -1706,6 +1694,6 @@ void get_target_temperature(StateVals *vals)
   }
   //TODO: change to a better fix
   //Default value is 35°C because I say so
-  vals->vapor_target_temp = 35;
+  vals->vapor_target_temp = 33;
 
 }
