@@ -1066,10 +1066,10 @@ void read_flow(StateVals *vals)
   speed_num++; 
 
  
-  if (speed_num > 10)
+  if (speed_num > 0)
   {
-    x_prom = arr_average(x_array, sizeof(x_array));
-    y_prom = arr_average(y_array, sizeof(y_array));
+    x_prom = x;//arr_average(x_array, sizeof(x_array));
+    y_prom = y;//arr_average(y_array, sizeof(y_array));
     //sensor_airspeed =  1.133423908e-4f * x_prom*x_prom - 1.159148562e-4f * x_prom*y_prom -  7.96225819e-6f * y_prom*y_prom -  6.244728852e-2f * x_prom + 8.898163594e-2f * y_prom - 13.26006647;
     //sensor_airspeed = 8.425983316e-4f  * x_prom*x_prom - 1.175031223e-3f * x_prom*y_prom + 4.294234517e-4f * y_prom*y_prom - 1.268141388e-1f * x_prom + 8.589904629e-2f * y_prom - 4.817979033f;
     //sensor_airspeed =  2.07278786e-7 *x_prom*x_prom*x_prom*x_prom - 1.258160808e-6 *x_prom*x_prom*x_prom*y_prom + 2.329122632e-6 *x_prom*x_prom*y_prom*y_prom - 1.684204298e-6 *x_prom* y_prom*y_prom*y_prom + 4.161528134e-7 *y_prom*y_prom*y_prom*y_prom + 1.865690411e-4 *x_prom*x_prom*x_prom - 2.397625704e-4 *x_prom*x_prom*y_prom - 1.05055706e-4 *x_prom*y_prom*y_prom + 1.293264445e-4 *y_prom*y_prom*y_prom - 1.107078016e-1 *x_prom*x_prom + 2.173253746e-1 *x_prom* y_prom - 7.790431822e-2 *y_prom*y_prom + 5.091561295 *x_prom - 17.07396366 *y_prom + 1779.975948;
@@ -1084,7 +1084,14 @@ void read_flow(StateVals *vals)
     sensor_airspeed = 0;
   }
   vals->current_airspeed = sensor_airspeed;
-  vals->current_airflow = sensor_airspeed;//vals->current_airspeed * ((3.1415/4) * pow(DIAMETER ,2)) * 60000;
+  if(vals->pwr_state)
+  {
+    vals->current_airflow = sensor_airspeed;//vals->current_airspeed * ((3.1415/4) * pow(DIAMETER ,2)) * 60000;
+  }
+  else
+  {
+    vals->current_airflow = 0;
+  }
   
 }
 
