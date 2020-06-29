@@ -107,7 +107,7 @@ HardwareSerial Serial3(PB11, PB10);
 #define BEEP_ONCE_DURATION      300
 #define ALARM_UPDATE_DELAY       10
 #define O2_UPDATE_DELAY         0
-#define DS_UPDATE_DELAY         2000
+#define DS_UPDATE_DELAY         1000
 #define HOSE_BB_UPDATE_DELAY    100
 #define GET_VTEMP_DELAY         8000
 
@@ -138,7 +138,7 @@ HardwareSerial Serial3(PB11, PB10);
 
 //Alarm critical values
 #define MAX_PLATE_TEMP          150
-#define MAX_V                   41//101: mapped mode; 41: L/min mode
+#define MAX_V                   26//101: mapped mode; 41: L/min mode
 
 
 // Globlas
@@ -234,19 +234,19 @@ struct StateVals
 
 struct TempTarget
 {
-  uint16_t target_temp = 28;
-  uint16_t target_humidity;
-  uint16_t target_v;
+  uint16_t target_temp = 31;
+  uint16_t target_humidity=80;
+  uint16_t target_v=10;
   uint16_t target_fio2 = 21;
   bool target_st;
   bool is_init_encoder_position;
   uint32_t encoder_position;
   char buffer[32];
-  char range_temp[21]; //Previously 11
-  char range_rh[101];
+  char range_temp[7]; //Previously 11
+  char range_rh[21];
   char range_v[MAX_V]; //Previously 41
   char range_st[4] = {0,0,1,1};
-  char range_fio2[55];
+  char range_fio2[46];
 
 
 }target_vals;
@@ -458,6 +458,7 @@ byte Skull[] = {
   delay(300);
   digitalWrite(BUZZER_PIN, LOW);
   //IWatchdog.begin(4000000);
+  next_screen_update = millis()+2000;
 }
 
 void loop() 
@@ -1269,22 +1270,22 @@ void write_config_menu(StateVals *vals, TempTarget *target)
   static uint32_t value_encoder;
   
   //Rango de los cases
-  static char cases[5] = {21,101,MAX_V,55,4}; //3rd value prev 41isnan
+  static char cases[5] = {7,21,MAX_V,46,4}; //3rd value prev 41isnan
 
   static char lcd_st[3][4] = {"OFF","ON "};
 
   //Define range of values for each variable
   for(int i=0;i<sizeof(target->range_temp);i++)
   {
-    target->range_temp[i] = i+28;
+    target->range_temp[i] = i+31;
   }
   for(int i=0;i<sizeof(target->range_rh);i++)
   {
-    target->range_rh[i] = i;
+    target->range_rh[i] = i+80;
   }
   for(int i=0;i<sizeof(target->range_v);i++)
   {
-    target->range_v[i] = i;
+    target->range_v[i] = i+10;
   }
   for(int i=0;i<sizeof(target->range_fio2);i++)
   {
@@ -1371,7 +1372,7 @@ void write_config_menu(StateVals *vals, TempTarget *target)
       target->target_st = target->range_st[target->encoder_position];     
       break;    
     }
-  sprintf(target->buffer, "T:%2dC  RH:%3d%%  %2dLPM %c%c:%2d%% %c%c%c", target->target_temp,target->target_humidity,target->target_v,byte(4), byte(5),target->target_fio2,lcd_st[target->target_st][0],lcd_st[target->target_st][1],lcd_st[target->target_st][2]);
+  sprintf(target->buffer, "T:%2d%cC RH:%3d%%  %2dLPM %c%c:%2d%% %c%c%c", target->target_temp,byte(2),target->target_humidity,target->target_v,byte(4), byte(5),target->target_fio2,lcd_st[target->target_st][0],lcd_st[target->target_st][1],lcd_st[target->target_st][2]);
 
   lcd_buffer_write(&target_vals);
 
