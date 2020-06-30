@@ -47,7 +47,6 @@
 #include <DallasTemperature.h>
 #include <OneWire.h> 
 
-
 #ifdef O2SENSE_NEED_METADATA
 bool has_sernum = false;
 bool has_vernum = false;
