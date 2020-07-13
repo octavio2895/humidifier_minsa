@@ -32,6 +32,7 @@
 */
 
 #include <Arduino.h>
+#include <SimpleDHT.h>
 #include <DHT.h>
 #include <Thermistor.h>
 #include <NTC_Thermistor.h>
@@ -109,6 +110,7 @@ HardwareSerial Serial3(PB11, PB10);
 #define DS_UPDATE_DELAY         1000
 #define HOSE_BB_UPDATE_DELAY    100
 #define GET_VTEMP_DELAY         8000
+#define PRINT_02_DELAY          4000
 
 //PID Values
 #define KP_PD_HUM               3.5
@@ -137,7 +139,7 @@ HardwareSerial Serial3(PB11, PB10);
 
 //Alarm critical values
 #define MAX_PLATE_TEMP          150
-#define MAX_V                   26//101: mapped mode; 41: L/min mode
+#define DELTA_V                 16//101: mapped mode; 41: L/min mode
 
 
 // Globlas
@@ -214,6 +216,7 @@ struct StateVals
 
 
 
+
   uint16_t adc_flow_t = 0;
   uint16_t adc_flow_v = 0;
   
@@ -235,7 +238,7 @@ struct TempTarget
 {
   uint16_t target_temp = 31;
   uint16_t target_humidity=80;
-  uint16_t target_v=10;
+  uint16_t target_v=20;
   uint16_t target_fio2 = 21;
   bool target_st;
   bool is_init_encoder_position;
@@ -243,8 +246,8 @@ struct TempTarget
   char buffer[32];
   char range_temp[7]; //Previously 11
   char range_rh[21];
-  char range_v[MAX_V]; //Previously 41
-  char range_st[4] = {0,0,1,1};
+  char range_v[DELTA_V]; //Previously 41
+  char range_st[4] = {0,1,0,1}; //Prev 0,0 1,1
   char range_fio2[46];
 
 
@@ -266,7 +269,8 @@ struct Alarms
 
 // Objects
 Thermistor* thermistor;
-DHT dht(DHTPIN, DHTTYPE);
+//DHT dht(DHTPIN, DHTTYPE);
+SimpleDHT22 dht22(DHTPIN);
 RotaryEncoder encoder(PIN_A, PIN_B, BUTTON);
 LiquidCrystal_I2C lcd(PCF8574_ADDR_A21_A11_A01, 4, 5, 6, 16, 11, 12, 13, 14, POSITIVE);
 ClickButton button1(BUTTON, LOW, CLICKBTN_PULLUP);
@@ -315,7 +319,7 @@ void curve_control_FAN(StateVals *vals);
 void read_ds18b20(StateVals *vals);
 void hose_bang_bang(StateVals *vals);
 void get_target_temperature(StateVals *vals);
-
+void print_o2_screen(StateVals *vals, TempTarget *target);
 //void lcd_buffer_write_debug(char buffer [200],uint16_t buffer_size,uint16_t view_port_init);
 
 
@@ -419,7 +423,7 @@ byte Skull[] = {
   lcd.createChar(5, o2);
 
   encoder.begin();
-  dht.begin();
+  //dht.begin();
   attachInterrupt(digitalPinToInterrupt(PIN_A), encoderISR, CHANGE);
   attachInterrupt(digitalPinToInterrupt(PIN_B), encoderISR, CHANGE);
   
@@ -458,6 +462,7 @@ byte Skull[] = {
   digitalWrite(BUZZER_PIN, LOW);
   //IWatchdog.begin(4000000);
   next_screen_update = millis()+2000;
+  
 }
 
 void loop() 
@@ -1001,11 +1006,15 @@ void read_dht(StateVals *vals)
   #ifdef DEBUG
   Serial.println("Reading DHT...");
   #endif
-  float humidity, temp; 
-  humidity = dht.readHumidity();
-  temp = dht.readTemperature();
-  Serial.println(humidity);
-  Serial.println(temp);
+  float humidity, temp;
+  int err = SimpleDHTErrSuccess; 
+  if ((err = dht22.read2(&temp, &humidity, NULL)) != SimpleDHTErrSuccess) 
+  {
+    //Serial.print("Read DHT22 failed, err="); Serial.println(err);delay(2000);
+    return;
+  }
+  // humidity = dht.readHumidity();
+  // temp = dht.readTemperature();
   if(isnan(humidity)||isnan(temp))
     {
       vals->vapor_humidity = 0.0;
@@ -1178,6 +1187,8 @@ void read_encoder_button(StateVals *vals, TempTarget *target)
     beep_creator(vals,BEEP_ONCE);
     if(vals->is_main_menu)
     {
+      //Just to be safe.
+      encoder.setPosition(10000);
       vals->is_config_mode = 1;
       vals->is_main_menu = 0;  
       vals->button_counter = 0;
@@ -1187,6 +1198,7 @@ void read_encoder_button(StateVals *vals, TempTarget *target)
     {
       vals->is_possible_condition = 0; // Set to 0 when using curve control mode
       check_fio2_flow(vals,target);
+      
       if(vals->is_possible_condition)
       {
         vals->is_config_mode = 0;
@@ -1197,6 +1209,7 @@ void read_encoder_button(StateVals *vals, TempTarget *target)
         vals->target_airflow = target->target_v;
         vals->pwr_state = target->target_st;
         vals->target_fio2 = target->target_fio2;
+        if(vals->pwr_state) print_o2_screen(vals,target);
       }
       else
       {
@@ -1212,9 +1225,6 @@ void read_encoder_button(StateVals *vals, TempTarget *target)
       vals->is_debug_mode = 0;
     }
     
-    // vals->current_beep.beep_id++;
-    // vals->current_beep.beep_type=BEEP_ONCE;
-    // vals->current_beep.beep_clock = vals->current_beep.beep_type;
   }
   else if(button1.clicks == 2 && vals->is_main_menu)
   {
@@ -1266,10 +1276,10 @@ void write_config_menu(StateVals *vals, TempTarget *target)
 
   #endif
   
+  static uint32_t last_enc = 10000;
   static uint32_t value_encoder;
-  
   //Rango de los cases
-  static char cases[5] = {7,21,MAX_V,46,4}; //3rd value prev 41isnan
+  static char cases[5] = {7,21,DELTA_V,46,4}; //3rd value prev 41isnan
 
   static char lcd_st[3][4] = {"OFF","ON "};
 
@@ -1284,7 +1294,7 @@ void write_config_menu(StateVals *vals, TempTarget *target)
   }
   for(int i=0;i<sizeof(target->range_v);i++)
   {
-    target->range_v[i] = i+10;
+    target->range_v[i] = i+20;
   }
   for(int i=0;i<sizeof(target->range_fio2);i++)
   {
@@ -1301,7 +1311,8 @@ void write_config_menu(StateVals *vals, TempTarget *target)
         {
           if(target->target_temp==target->range_temp[i])
           {
-            value_encoder = i;
+            //Is the i value that matches the array position.
+            value_encoder = i+sizeof(target->range_temp)*100;
             break;  
           }
         }
@@ -1311,7 +1322,7 @@ void write_config_menu(StateVals *vals, TempTarget *target)
         {
           if(target->target_humidity==target->range_rh[i])
           {
-            value_encoder = i;
+            value_encoder = i+sizeof(target->range_rh)*100;
             break;  
           }
         }
@@ -1321,7 +1332,7 @@ void write_config_menu(StateVals *vals, TempTarget *target)
         {
           if(target->target_v==target->range_v[i])
           {
-            value_encoder = i;
+            value_encoder = i+sizeof(target->range_v)*100;
             break;  
           }
         }
@@ -1331,7 +1342,7 @@ void write_config_menu(StateVals *vals, TempTarget *target)
       {
         if(target->target_fio2==target->range_fio2[i])
         {
-          value_encoder = i;
+          value_encoder = i+sizeof(target->range_fio2)*100;
           break;  
         }
       }
@@ -1340,19 +1351,24 @@ void write_config_menu(StateVals *vals, TempTarget *target)
       {
         if(target->target_st==target->range_st[i])
         {
-          value_encoder = i;
+          value_encoder = i+sizeof(target->range_st)*100;
           break;  
         }
       }
-        break;   
-      default:
-        break;
     }
-    encoder.setPosition((cases[vals->button_counter%POSIBLE_POSITIONS])*100+value_encoder);
-  }
-  //Handle Encoder in CONFIG MODE
-  target->encoder_position = ((encoder.getPosition()+2000*cases[vals->button_counter%POSIBLE_POSITIONS]))%cases[vals->button_counter%POSIBLE_POSITIONS];
+    //Reference Value
+    
+    //Sets a encoder position so that it matchs the previous target value selected.
+    //encoder.setPosition((cases[vals->button_counter%POSIBLE_POSITIONS])*100*value_encoder);
 
+  }
+  //Change the target value using the encoder value as referenc .
+  
+ 
+  value_encoder = value_encoder + (int)((encoder.getPosition()/2-last_enc/2));
+  target->encoder_position = (value_encoder)%(cases[vals->button_counter%POSIBLE_POSITIONS]);
+  //target->encoder_position = ((encoder.getPosition()/2/*+2000*cases[vals->button_counter%POSIBLE_POSITIONS]*/))%cases[vals->button_counter%POSIBLE_POSITIONS];
+  last_enc = encoder.getPosition();
   switch (vals->button_counter%POSIBLE_POSITIONS)
     {
     case TOP_LEFT:
@@ -1371,7 +1387,7 @@ void write_config_menu(StateVals *vals, TempTarget *target)
       target->target_st = target->range_st[target->encoder_position];     
       break;    
     }
-  sprintf(target->buffer, "T:%2d%cC RH:%3d%%  %2dLPM %c%c:%2d%% %c%c%c", target->target_temp,byte(2),target->target_humidity,target->target_v,byte(4), byte(5),target->target_fio2,lcd_st[target->target_st][0],lcd_st[target->target_st][1],lcd_st[target->target_st][2]);
+  sprintf(target->buffer, "T:%2d%cC RH:%3d%%  %2dLPM %c%c:%2d%% %c%c%c", target->target_temp,byte(2),target->target_humidity,target->encoder_position/*target_v*/,byte(4), byte(5),(int)(encoder.getPosition())/*target->target_fio2*/,lcd_st[target->target_st][0],lcd_st[target->target_st][1],lcd_st[target->target_st][2]);
 
   lcd_buffer_write(&target_vals);
 
@@ -1388,11 +1404,11 @@ void write_main_menu(StateVals *vals, TempTarget *target)
 
   if(vals->pwr_state) 
   {
-    sprintf(target->buffer, "%c%2d%cC %c%3d%% %c:%2d%2dLPM %c%c:%2d%% ON ", byte(0), (int)vals->after_hose_temp, byte(2), byte(1), (int)printed_est_humidity, byte(5), (int)vals->set_o2_flow, (int)vals->current_airflow, byte(4), byte(5),(int)vals->o2_concentration/10);
+    sprintf(target->buffer, " %c%2d%cC   %c%3d%%  %2dLPM %c%c:%2d%% ON ", byte(0), (int)vals->after_hose_temp, byte(2), byte(1), (int)printed_est_humidity,(int)vals->current_airflow, byte(4), byte(5),(int)vals->o2_concentration/10);
   }
   else
   {
-    sprintf(target->buffer, "%c%2d%cC %c%3d%% %c:%2d%2dLPM %c%c:%2d%% OFF", byte(0), (int)vals->after_hose_temp, byte(2), byte(1), (int)printed_est_humidity, byte(5), (int)vals->set_o2_flow, (int)vals->current_airflow, byte(4), byte(5),(int)vals->o2_concentration/10);
+    sprintf(target->buffer, " %c%2d%cC   %c%3d%%  %2dLPM %c%c:%2d%% OFF", byte(0), (int)vals->after_hose_temp, byte(2), byte(1), (int)printed_est_humidity, (int)vals->current_airflow, byte(4), byte(5),(int)vals->o2_concentration/10);
   }
    
   lcd_buffer_write(&target_vals);
@@ -1653,6 +1669,13 @@ void check_fio2_flow_old(StateVals *vals, TempTarget *target)
       }
     } 
   }
+}
+
+void print_o2_screen(StateVals *vals, TempTarget *target)
+{
+  sprintf(target->buffer, "AJUSTAR VALVULA DE %c A %2d L/MIN  ",byte(5), (int)vals->set_o2_flow);
+  lcd_buffer_write(&target_vals);
+  next_screen_update = next_screen_update + PRINT_02_DELAY;
 }
 
 void curve_control_FAN(StateVals *vals)
