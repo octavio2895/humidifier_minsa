@@ -139,7 +139,7 @@ HardwareSerial Serial3(PB11, PB10);
 
 //Alarm critical values
 #define MAX_PLATE_TEMP          150
-#define DELTA_V                 16//101: mapped mode; 41: L/min mode
+#define DELTA_V                 26//101: mapped mode; 41: L/min mode
 
 
 // Globlas
@@ -239,7 +239,7 @@ struct TempTarget
   uint16_t target_temp = 31;
   uint16_t target_humidity=80;
   uint16_t target_v=20;
-  uint16_t target_fio2 = 21;
+  uint16_t target_fio2 = 53;
   bool target_st;
   bool is_init_encoder_position;
   uint32_t encoder_position;
@@ -399,7 +399,7 @@ byte Skull[] = {
   B00000,
   B00000
 };
-
+  analogWriteFrequency(20000);
   TempTarget *target = &target_vals;
   Serial.begin(115200);
   Serial.println("Booting up!");
@@ -1209,7 +1209,10 @@ void read_encoder_button(StateVals *vals, TempTarget *target)
         vals->target_airflow = target->target_v;
         vals->pwr_state = target->target_st;
         vals->target_fio2 = target->target_fio2;
-        if(vals->pwr_state) print_o2_screen(vals,target);
+        if(vals->pwr_state) 
+        {
+          print_o2_screen(vals,target);
+        }
       }
       else
       {
@@ -1294,7 +1297,7 @@ void write_config_menu(StateVals *vals, TempTarget *target)
   }
   for(int i=0;i<sizeof(target->range_v);i++)
   {
-    target->range_v[i] = i+20;
+    target->range_v[i] = i+10;
   }
   for(int i=0;i<sizeof(target->range_fio2);i++)
   {
@@ -1387,7 +1390,7 @@ void write_config_menu(StateVals *vals, TempTarget *target)
       target->target_st = target->range_st[target->encoder_position];     
       break;    
     }
-  sprintf(target->buffer, "T:%2d%cC RH:%3d%%  %2dLPM %c%c:%2d%% %c%c%c", target->target_temp,byte(2),target->target_humidity,target->encoder_position/*target_v*/,byte(4), byte(5),(int)(encoder.getPosition())/*target->target_fio2*/,lcd_st[target->target_st][0],lcd_st[target->target_st][1],lcd_st[target->target_st][2]);
+  sprintf(target->buffer, "T:%2d%cC RH:%3d%%  %2dLPM %c%c:%2d%% %c%c%c", target->target_temp,byte(2),target->target_humidity,target->target_v,byte(4), byte(5),target->target_fio2,lcd_st[target->target_st][0],lcd_st[target->target_st][1],lcd_st[target->target_st][2]);
 
   lcd_buffer_write(&target_vals);
 
