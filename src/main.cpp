@@ -755,24 +755,6 @@ void control_PD_humidity(StateVals *vals)
   {
     vals->duty_cycle = 0;
   }
-  
-  // if ((current_step < ((vals->duty_cycle/100)*PERIODO)))
-  // {
-  //   vals->plate_relay_cmd = true;
-  // }
-  // else
-  // {
-  //   vals->plate_relay_cmd = false;
-  // }
-  // //TODO: Make it a different function
-  // if (vals->plate_temp > MAX_PLATE_TEMP)
-  // {
-  //   vals->is_over_temp_flag = 1;
-  // }
-  // if (vals->plate_temp < MAX_PLATE_TEMP-15 && vals->is_over_temp_flag)
-  // {
-  //   vals->is_over_temp_flag = 0;
-  // }
 
 }
 
@@ -869,14 +851,6 @@ void control_PID_Fan(StateVals *vals)
   //Calculate PWM modifier
   pwm_modifier = (KP_FAN * error_airflow_current + KI_FAN * integral_error_airflow_current +  KD_FAN * delta_error_airflow_current);
   
-  // if (pwm_modifier > MAX_PWM_MODIFIER)
-  // {
-  //   pwm_modifier = MAX_PWM_MODIFIER;       
-  // }
-  // else if (pwm_modifier < -MAX_PWM_MODIFIER)
-  // {
-  //   pwm_modifier = MAX_PWM_MODIFIER;       
-  // }
 
   //Write new PWM value    
   vals->fan_pwm = vals->initial_target_pwm + pwm_modifier + 0.0717105 * vals->initial_target_pwm * vals->initial_target_pwm - 7.6985326 * vals->initial_target_pwm + 230.516;
@@ -1059,16 +1033,15 @@ void read_flow(StateVals *vals)
   #endif
   float TMP_Therm_ADunits = analogRead(WIND_THERM_PIN);
   float RV_Wind_ADunits = analogRead(WIND_SPEED_PIN);
-  vals->adc_flow_t = TMP_Therm_ADunits;
-  vals->adc_flow_v = RV_Wind_ADunits;
+
   float x = RV_Wind_ADunits;
   float y = TMP_Therm_ADunits;
   static float x_prom,y_prom,sensor_airspeed;
 
 
   static uint8_t speed_num = 0;
-  static float x_array[10] {0,0,0,0,0,0,0,0,0,0};
-  static float y_array[10] {0,0,0,0,0,0,0,0,0,0};
+  static float x_array[16] {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
+  static float y_array[16] {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
   
   x_array[speed_num] = x;
   y_array[speed_num] = y;
@@ -1079,14 +1052,13 @@ void read_flow(StateVals *vals)
   {
     x_prom = x;//arr_average(x_array, sizeof(x_array));
     y_prom = y;//arr_average(y_array, sizeof(y_array));
-    //sensor_airspeed =  1.133423908e-4f * x_prom*x_prom - 1.159148562e-4f * x_prom*y_prom -  7.96225819e-6f * y_prom*y_prom -  6.244728852e-2f * x_prom + 8.898163594e-2f * y_prom - 13.26006647;
-    //sensor_airspeed = 8.425983316e-4f  * x_prom*x_prom - 1.175031223e-3f * x_prom*y_prom + 4.294234517e-4f * y_prom*y_prom - 1.268141388e-1f * x_prom + 8.589904629e-2f * y_prom - 4.817979033f;
-    //sensor_airspeed =  2.07278786e-7 *x_prom*x_prom*x_prom*x_prom - 1.258160808e-6 *x_prom*x_prom*x_prom*y_prom + 2.329122632e-6 *x_prom*x_prom*y_prom*y_prom - 1.684204298e-6 *x_prom* y_prom*y_prom*y_prom + 4.161528134e-7 *y_prom*y_prom*y_prom*y_prom + 1.865690411e-4 *x_prom*x_prom*x_prom - 2.397625704e-4 *x_prom*x_prom*y_prom - 1.05055706e-4 *x_prom*y_prom*y_prom + 1.293264445e-4 *y_prom*y_prom*y_prom - 1.107078016e-1 *x_prom*x_prom + 2.173253746e-1 *x_prom* y_prom - 7.790431822e-2 *y_prom*y_prom + 5.091561295 *x_prom - 17.07396366 *y_prom + 1779.975948;
     sensor_airspeed =  -1.056891481e-5 *x_prom*x_prom*x_prom + 3.245687769e-5 *x_prom*x_prom * y_prom - 3.605536507e-5 *x_prom *y_prom*y_prom + 1.138111633e-5 *y_prom*y_prom*y_prom + 2.436108257e-3 *x_prom*x_prom - 1.102028777e-3 *x_prom*y_prom + 3.695040756e-3 *y_prom*y_prom - 1.163719965 *x_prom - 1.820651701 *y_prom + 580.7883239;
     speed_num = 0;
+
   }
 
-  
+  vals->adc_flow_t = arr_average(y_array, sizeof(y_array));
+  vals->adc_flow_v = arr_average(x_array, sizeof(x_array));
   
   if (sensor_airspeed <  0)
   {
@@ -1150,14 +1122,6 @@ void read_flow_old(StateVals *vals)
 
 void read_o2(StateVals *vals, TempTarget *target)
 {
-    // at least 1 byte from UART arrived
-  if(vals->o2_test%100>19)
-  {
-    //o2sens_init();
-    //vals->o2_test = 0;
-    //o2sens_clearNewData(); // clear the new packet flag
-  }
-  //vals->o2_buffer = o2sens_getRawBuffer();
 
   o2sens_feedUartByte(Serial3.read()); // give byte to the parser
   vals->o2_test = vals->o2_test + 1;
