@@ -49,9 +49,6 @@ bool has_vernum = false;
 
 HardwareSerial Serial3(PB11, PB10);
 
-// #define OUTPUT_BUFFER_SIZE 32
-// char output_buffer[OUTPUT_BUFFER_SIZE];
-
 // Physical properties
 #define B_VALUE                 3950
 #define HUMIDITY_TEMP           95
@@ -109,7 +106,7 @@ HardwareSerial Serial3(PB11, PB10);
 #define KD_FAN                  0
 #define KI_FAN                  0
 #define KP_SMC                  0.01
-#define MAX_PWM_dot        500
+#define MAX_PWM_dot             500
 
 //Cursor Locations
 #define POSIBLE_POSITIONS       5
@@ -602,33 +599,6 @@ void estimate_exit_humidity(StateVals *vals)
 
   vals->est_humidity = ((273.15+vals->after_hose_temp)*vals->est_abs_humidity)/(6.112*exp((17.67*vals->after_hose_temp)/(vals->after_hose_temp + 243.5))*2.1674);
 
-  #ifdef DEBUG
-  char serial_buff[100];
-  sprintf(serial_buff, "DEBUG: DeltaT is estimated to be about %2.2f °C", delta_t);
-  Serial.println(serial_buff);
-  // serial_buff = "";
-  sprintf(serial_buff, "DEBUG: AbsHumd at hose entry is estimated to be about %1.5f g/m3", vals->vapor_abs_humidity);
-  Serial.println(serial_buff);
-  // serial_buff = "";
-  sprintf(serial_buff, "DEBUG: EntryDensity at hose entry is estimated to be about %1.5f kg/m3", entry_density);
-  Serial.println(serial_buff);
-  // serial_buff = "";
-  sprintf(serial_buff, "DEBUG: ExitDensity at hose exit is estimated to be about %1.5f kg/m3", exit_density);
-  Serial.println(serial_buff);
-  // serial_buff = "";
-  sprintf(serial_buff, "DEBUG: AirMassFlow is estimated to be about %1.5f kg/m3", air_mass_flow);
-  Serial.println(serial_buff);
-  // serial_buff = "";control_PD_humidity
-  sprintf(serial_buff, "DEBUG: WaterMassFlow is estimated to be about %1.5f kg/m3", water_mass_flow);
-  Serial.println(serial_buff);
-  // serial_buff = "";
-  sprintf(serial_buff, "DEBUG: AbsHumd at hose exit is estimated to be about %1.5f g/m3", vals->vapor_abs_humidity);
-  Serial.println(serial_buff);
-  // serial_buff = "";
-  sprintf(serial_buff, "DEBUG: RH at hose exit is estimated to be about %1.5f g/m3", vals->vapor_abs_humidity);
-  Serial.println(serial_buff);
-  // serial_buff = "";
-  #endif
 }
 
 void control_PD_humidity(StateVals *vals)
@@ -860,8 +830,6 @@ void read_dht(StateVals *vals)
     //Serial.print("Read DHT22 failed, err="); Serial.println(err);delay(2000);
     return;
   }
-  // humidity = dht.readHumidity();
-  // temp = dht.readTemperature();
   if(isnan(humidity)||isnan(temp))
     {
       vals->vapor_humidity = 0.0;
@@ -952,7 +920,6 @@ void read_flow(StateVals *vals)
 
 void read_o2(StateVals *vals, TempTarget *target)
 {
-
   o2sens_feedUartByte(Serial3.read()); // give byte to the parser
   vals->o2_test = vals->o2_test + 1;
   if (o2sens_hasNewData()) // a complete packet has been processed
