@@ -223,8 +223,6 @@ struct TempTarget
   char range_v[DELTA_V]; //Previously 41
   char range_st[4] = {0,1,0,1}; //Prev 0,0 1,1
   char range_fio2[46];
-
-
 }target_vals;
 
 struct Alarms
@@ -237,7 +235,6 @@ struct Alarms
   bool  has_unusual_flow;
   bool  has_sensor_fault;
   bool  error;
-
 }les_alarms;
 
 // Objects
@@ -283,8 +280,7 @@ void get_target_temperature(StateVals *vals);
 void setup() 
 {
 // // Make custom characters:
- byte Fi[] = {
-  
+ byte Fi[] = { 
   B11110,
   B10000,
   B10001,
@@ -294,8 +290,7 @@ void setup()
   B10001,
   B00000
 };
- byte o2[] = {
-  
+ byte o2[] = {  
   B11100,
   B10100,
   B10100,
@@ -370,7 +365,6 @@ byte Bug[] = {
   lcd.createChar(5, o2);
 
   encoder.begin();
-  //dht.begin();
   attachInterrupt(digitalPinToInterrupt(PIN_A), encoderISR, CHANGE);
   attachInterrupt(digitalPinToInterrupt(PIN_B), encoderISR, CHANGE);
   
@@ -403,7 +397,6 @@ byte Bug[] = {
   delay(300);
   digitalWrite(BUZZER_PIN, LOW);
   next_screen_update = millis()+2000;
-  
 }
 
 void loop() 
@@ -594,11 +587,8 @@ void estimate_exit_humidity(StateVals *vals)
   vals->vapor_abs_humidity = (6.112*exp((17.67*vals->vapor_temp)/(vals->vapor_temp + 243.5))*(vals->vapor_humidity)*2.1674)/(273.15+vals->vapor_temp); //[g/m³]
   float entry_density = get_density(vals->vapor_temp);
   float exit_density = get_density(vals->after_hose_temp);
-
   vals->est_abs_humidity = vals->vapor_abs_humidity * exit_density/entry_density; //water_mass_flow/exit_airflow;
-
   vals->est_humidity = ((273.15+vals->after_hose_temp)*vals->est_abs_humidity)/(6.112*exp((17.67*vals->after_hose_temp)/(vals->after_hose_temp + 243.5))*2.1674);
-
 }
 
 void control_PD_humidity(StateVals *vals)
@@ -655,16 +645,8 @@ void control_SMC_temp (StateVals *vals)
   pendiente = (vals->plate_temp-temp_old)/(current_millis-old_millis);
   error_temp = vals->target_humidity+40 - vals->plate_temp;
 
-
-    
-  if(pendiente < KP_SMC*error_temp)
+  if(pendiente >= KP_SMC*error_temp)
   {
-    //vals->plate_relay_cmd = 1;
-    //vals->duty_cycle = 30;
-  }
-  else
-  {
-    //vals->plate_relay_cmd = 0;
     vals->duty_cycle = 0;
   }
   old_millis = millis();
@@ -684,7 +666,6 @@ void control_SMC_temp (StateVals *vals)
     vals->plate_relay_cmd = false;
   }
 
-
   //TODO: Make it a different function
   if (vals->plate_temp > MAX_PLATE_TEMP)
   {
@@ -694,8 +675,6 @@ void control_SMC_temp (StateVals *vals)
   {
     vals->is_over_temp_flag = 0;
   }
-
-
 }
 
 void control_PID_Fan(StateVals *vals)
@@ -704,8 +683,6 @@ void control_PID_Fan(StateVals *vals)
   static float error_airflow_old;
   static float delta_error_airflow_current, integral_error_airflow_current;
   static int32_t  pwm_dot, pwm_const;
-
-  
   static uint16_t old_millis, integral_num = 0;
   static float integral_array[180];
   static bool init = 0, pwm_bool = 0;
@@ -734,7 +711,7 @@ void control_PID_Fan(StateVals *vals)
     integral_num = 0;
   }
 
-  //Calculate PWM modifier
+  //Calculate PWM dot
   pwm_dot = (KP_FAN * error_airflow_current + KI_FAN * integral_error_airflow_current +  KD_FAN * delta_error_airflow_current);
   
   //Write new PWM value    
@@ -767,17 +744,11 @@ void control_PID_Fan(StateVals *vals)
   {
     vals->fan_pwm = 0;       
   }
-  
-
 }
 
 void mapped_fan_control(StateVals *vals)
 {
-  //Map target_flow (0-100%) to PWM[50,256] 
-
   vals->fan_pwm = map(vals->target_airflow, 0, 100, 0, 256);
- 
-  
 }
 
 void execute(StateVals *vals)
@@ -793,7 +764,6 @@ void execute(StateVals *vals)
       vals->is_vapor_too_hot = 0;
     }
     
-
     if(vals->plate_relay_cmd && !vals->is_vapor_too_hot)
     {
       digitalWrite(PLATE_RELAY_PIN, LOW);
@@ -815,19 +785,14 @@ void execute(StateVals *vals)
     digitalWrite(PLATE_RELAY_PIN, HIGH);
     vals->plate_relay_state = false;
   }
-  
 }
 
 void read_dht(StateVals *vals)
 {
-  #ifdef DEBUG
-  Serial.println("Reading DHT...");
-  #endif
   float humidity, temp;
   int err = SimpleDHTErrSuccess; 
   if ((err = dht22.read2(&temp, &humidity, NULL)) != SimpleDHTErrSuccess) 
   {
-    //Serial.print("Read DHT22 failed, err="); Serial.println(err);delay(2000);
     return;
   }
   if(isnan(humidity)||isnan(temp))
@@ -843,9 +808,6 @@ void read_dht(StateVals *vals)
 
 void read_thermistor(StateVals *vals)
 {
-  #ifdef DEBUG
-  Serial.println("Reading thermistor...");
-  #endif
   static uint8_t temp_num = 0;
   static float temp_array[256];
   static bool init = 0;
@@ -869,17 +831,11 @@ void read_thermistor(StateVals *vals)
 
 void read_flow(StateVals *vals) 
 {
-  #ifdef DEBUG
-  Serial.println("Reading flow...");
-  #endif
   float TMP_Therm_ADunits = analogRead(WIND_THERM_PIN);
   float RV_Wind_ADunits = analogRead(WIND_SPEED_PIN);
-
   float x = RV_Wind_ADunits;
   float y = TMP_Therm_ADunits;
   static float x_prom,y_prom,sensor_airspeed;
-
-
   static uint8_t speed_num = 0;
   static float x_array[32];
   static float y_array[32];
@@ -930,7 +886,6 @@ void read_o2(StateVals *vals, TempTarget *target)
     vals->o2_flow = o2sens_getFlowRate16();
     vals->o2_temp = o2sens_getTemperature16(); 
   }
-  
   vals->o2_test = vals->o2_test + 2;
 }
 
@@ -969,7 +924,6 @@ void read_encoder_button(StateVals *vals, TempTarget *target)
       vals->target_airflow = target->target_v;
       vals->pwr_state = target->target_st;
       vals->target_fio2 = target->target_fio2;
-
     }
     else if(vals->is_debug_mode)
     {
@@ -977,7 +931,6 @@ void read_encoder_button(StateVals *vals, TempTarget *target)
       vals->is_main_menu = 1;
       vals->is_debug_mode = 0;
     }
-    
   }
   else if(button1.clicks == 2 && vals->is_main_menu)
   {
@@ -994,7 +947,6 @@ void manage_cursor(StateVals *vals)
 {
   if(vals->is_config_mode)
   {
-    
     switch(vals->button_counter%POSIBLE_POSITIONS)
     {
       case TOP_LEFT:
@@ -1018,8 +970,7 @@ void manage_cursor(StateVals *vals)
   else
   {
     lcd.noBlink();
-  }
-  
+  } 
 }
 
 void write_config_menu(StateVals *vals, TempTarget *target)
@@ -1028,7 +979,6 @@ void write_config_menu(StateVals *vals, TempTarget *target)
   static uint32_t value_encoder;
   //Rango de los cases
   static char cases[5] = {7,21,DELTA_V,46,4}; //3rd value prev 41isnan
-
   static char lcd_st[3][4] = {"OFF","ON "};
 
   //Define range of values for each variable
@@ -1158,7 +1108,6 @@ void write_main_menu(StateVals *vals, TempTarget *target)
 
 void write_debug_menu(StateVals *vals, TempTarget *target)
 {
-
   switch (vals->button_counter%POSIBLE_POSITIONS)
       {
       case TOP_LEFT:
@@ -1320,7 +1269,6 @@ void hose_bang_bang(StateVals *vals)
 
 void get_target_temperature(StateVals *vals)
 {
-
   float target_vapor_temp, error_humidity, est_target_abs_humidity;
   //Calculate abs_humidity with target values
   float target_abs_humidity = (6.112*exp((17.67*vals->target_temp)/(vals->target_temp + 243.5))*(vals->target_humidity)*2.1674)/(273.15+vals->target_temp); //[g/m³]
