@@ -123,7 +123,7 @@ HardwareSerial Serial3(PB11, PB10);
 
 //Alarm critical values
 #define MAX_PLATE_TEMP          150
-#define DELTA_V                 91//101: mapped mode; 26: L/min mode
+#define DELTA_V                 51//101: mapped mode; 26: L/min mode
 
 
 // Global Variables
@@ -203,6 +203,7 @@ struct StateVals
   bool is_debug_mode = 0; //Controls debug mode
   //Alarm Flags
   bool is_alarm = 0;
+  bool temp_sensor = 0;
   bool is_vapor_too_hot = 0;
   bool is_over_temp_flag = 0; // The flag is set whenever the relay is turned of because of the plate temp.
   bool is_out_of_water = 0; //Check plate temp to see if there is water left.
@@ -276,6 +277,7 @@ void read_o2(StateVals *vals, TempTarget *target);
 void read_ds18b20(StateVals *vals);
 void hose_bang_bang(StateVals *vals);
 void get_target_temperature(StateVals *vals);
+void sensor_check(StateVals *vals,TempTarget *target);
 
 void setup() 
 {
@@ -343,6 +345,7 @@ byte Bug[] = {
 
   analogWriteFrequency(20000);
   TempTarget *target = &target_vals;
+  StateVals *state = &state_vals;
   Serial.begin(115200);
   Serial.println("Booting up!");
   pinMode(PLATE_RELAY_PIN, OUTPUT);
@@ -397,6 +400,7 @@ byte Bug[] = {
   delay(300);
   digitalWrite(BUZZER_PIN, LOW);
   next_screen_update = millis()+2000;
+  sensor_check(&state_vals,&target_vals);
 }
 
 void loop() 
@@ -581,9 +585,6 @@ void loop()
 
 void estimate_exit_humidity(StateVals *vals)
 {
-  #ifdef DEBUG
-  Serial.println("Estimating flow...");
-  #endif
   vals->vapor_abs_humidity = (6.112*exp((17.67*vals->vapor_temp)/(vals->vapor_temp + 243.5))*(vals->vapor_humidity)*2.1674)/(273.15+vals->vapor_temp); //[g/m³]
   float entry_density = get_density(vals->vapor_temp);
   float exit_density = get_density(vals->after_hose_temp);
@@ -1290,4 +1291,23 @@ void get_target_temperature(StateVals *vals)
   //TODO: change to a better fix
   //Default value is 33°C because I say so
   vals->vapor_target_temp = 33;
+}
+
+void sensor_check(StateVals *vals, TempTarget *target)
+{
+  float hose_temp;
+  sensors.requestTemperatures();
+  delay(1000);
+  hose_temp = sensors.getTempCByIndex(0);
+
+  if (hose_temp < -100 || hose_temp > 80)
+  {
+    vals->is_alarm = 1;
+  }
+  if(vals->is_alarm)
+  {
+    sprintf(target->buffer, "ERROR ENCONTRADOVERIFICAR EQUIPO");
+    lcd_buffer_write(&target_vals);
+  }
+  delay(3999);
 }
