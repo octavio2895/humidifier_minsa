@@ -43,6 +43,7 @@
 #include <HardwareSerial.h>
 #include <DallasTemperature.h>
 #include <OneWire.h> 
+#include <customChars.h>
 
 #ifdef O2SENSE_NEED_METADATA
 bool has_sernum = false;
@@ -86,6 +87,9 @@ HardwareSerial Serial3(PB11, PB10);
 #define LCD_ROWS                2     // Quantity of lcd rows.
 #define LCD_COLUMNS             16    // Quantity of lcd columns.
 #define LCD_SPACE_SYMBOL        0x20  //Space symbol from lcd ROM, see p.9 of GDM2004D datasheet.
+#define DRY_TANK_OVERTEMP_FREQ  5
+#define LOW_HUM_THRESHOLD       75  //Highest humidity that can trigger dry alarm
+#define LOW_HUM_TIMEOUT         60000 // Time required to trigger dry alarm
 // #define DEBUG
 
 // Timming
@@ -173,6 +177,13 @@ struct Beeps
   uint8_t beep_clock = 0;
 };
 
+enum States
+{
+  PLAY,
+  PAUSED,
+  STOP,
+};
+
 struct StateVals
 {
   float plate_temp = 0; // Current plat temperature. °C
@@ -210,6 +221,8 @@ struct StateVals
   float set_o2_flow = 0;
   bool hose_state = 0;
   float vapor_target_temp = 0;
+  float overtemp_frequency = 0;
+  float temp_slope;
 
   uint16_t adc_flow_t = 0;
   uint16_t adc_flow_v = 0;
@@ -243,8 +256,6 @@ struct TempTarget
   char range_v[DELTA_V]; //Previously 41
   char range_st[4] = {0,1,0,1}; //Prev 0,0 1,1
   char range_fio2[46];
-
-
 }target_vals;
 
 struct Alarms
@@ -257,11 +268,16 @@ struct Alarms
   bool  has_unusual_flow;
   bool  has_sensor_fault;
   bool  error;
-
+  bool  new_alarm;
 }les_alarms;
 
-// Objects
-Thermistor* thermistor;
+struct SysState
+{
+  States state=PLAY;
+  char stop_screen[60];
+  bool stop_screen_displayed;
+}sys_state;
+
 SimpleDHT22 dht22(DHTPIN);
 RotaryEncoder encoder(PIN_A, PIN_B, BUTTON);
 LiquidCrystal_I2C lcd(PCF8574_ADDR_A21_A11_A01, 4, 5, 6, 16, 11, 12, 13, 14, POSITIVE);
@@ -293,7 +309,7 @@ void encoderISR();
 float arr_average(float *arr, uint16_t size);
 float integral_control(float *i_control, uint16_t isize);
 void manage_cursor(StateVals *vals);
-void alarm_manager(StateVals *vals, Alarms *alarm);
+void alarm_manager(StateVals *vals, Alarms *alarm, SysState *sys);
 void flow_to_PWM(StateVals *vals);
 void read_o2(StateVals *vals, TempTarget *target);
 void check_fio2_flow(StateVals *vals, TempTarget *target);
@@ -311,82 +327,8 @@ uint8_t calcCRC(char buff[], int num);
 void setup() 
 {
 // // Make custom characters:
- byte Fi[] = {
-  
-  B11110,
-  B10000,
-  B10001,
-  B11100,
-  B10001,
-  B10001,
-  B10001,
-  B00000
-};
- byte o2[] = {
-  
-  B11100,
-  B10100,
-  B10100,
-  B11111,
-  B00001,
-  B00111,
-  B00100,
-  B00111
-};
-byte Water[] = {
-  B00100,
-  B01110,
-  B01110,
-  B11101,
-  B11101,
-  B11011,
-  B01110,
-  B00000
-};
-byte Temperatura[] = {
-  B00100,
-  B01010,
-  B01010,
-  B01010,
-  B01010,
-  B10001,
-  B10001,
-  B01110
-};
-byte Grade[] = {
-  B11100,
-  B10100,
-  B11100,
-  B00000,
-  B00000,
-  B00000,
-  B00000,
-  B00000
-};
-byte Bug[] = {
-  B11111,
-  B10101,
-  B11111,
-  B11111,
-  B01110,
-  B01010,
-  B11011,
-  B00000
-};
-byte Skull[] = {
-  B00000,
-  B01110,
-  B10101,
-  B11011,
-  B01110,
-  B01110,
-  B00000,
-  B00000
-};
   analogWriteFrequency(20000);
   TempTarget *target = &target_vals;
-  Serial.begin(115200);
-  Serial.println("Booting up!");
   pinMode(PLATE_RELAY_PIN, OUTPUT);
   pinMode(FAN_PIN, OUTPUT);
   analogWrite(FAN_PIN, 0);
@@ -398,7 +340,6 @@ byte Skull[] = {
   pinMode(WIND_SPEED_PIN, INPUT_ANALOG);
   pinMode(BUZZER_PIN, OUTPUT);
   lcd.begin(LCD_COLUMNS, LCD_ROWS, LCD_5x8DOTS);
-    // Create a new characters:
   lcd.createChar(0, Temperatura);
   lcd.createChar(1, Water);
   lcd.createChar(2, Grade);
@@ -468,7 +409,7 @@ void loop()
   {
     if(millis() > next_alarm_update )
     {
-      alarm_manager(&state_vals, &les_alarms);
+      alarm_manager(&state_vals, &les_alarms, &sys_state);
       next_alarm_update = millis() + ALARM_UPDATE_DELAY;
       if(next_alarm_update < millis()) next_alarm_overflow_flag = true;
     }
@@ -620,7 +561,21 @@ void loop()
     manage_cursor(&state_vals);
     if (millis() > next_screen_update) 
     {  
-      if(vals->is_main_menu)
+      if(sys_state.state != 0)
+      {
+        if(!sys_state.stop_screen_displayed)
+        {
+          beep_creator(vals, BEEP_THRICE);
+          lcd.clear();
+          lcd.setCursor(0, 0);
+          if(sys_state.state == PAUSED)lcd.print("Sistema Pausado");
+          else lcd.print("Sistema Parado");
+          lcd.setCursor(0,1);
+          lcd.print(sys_state.stop_screen);
+          sys_state.stop_screen_displayed = true;
+        }
+      }
+      else if(vals->is_main_menu)
       {
         write_main_menu(&state_vals, &target_vals);
       }
@@ -641,6 +596,23 @@ void loop()
 
 void estimate_flow(StateVals *vals)
 {
+  static uint32_t low_hum_start_time;
+  static bool low_hum_timer_started = false;
+  if(!low_hum_timer_started && vals->vapor_humidity<LOW_HUM_THRESHOLD && !les_alarms.is_dry)
+  {
+    low_hum_start_time = millis();
+    low_hum_timer_started = true;
+  }
+  else if(low_hum_timer_started && vals->vapor_humidity>LOW_HUM_THRESHOLD)
+  {
+    low_hum_timer_started = false;
+  }
+  if(low_hum_timer_started && millis()-low_hum_start_time>LOW_HUM_TIMEOUT)
+  {
+    les_alarms.new_alarm = true;
+    les_alarms.is_dry = true;
+    low_hum_timer_started = false;
+  }
   #ifdef DEBUG
   Serial.println("Estimating flow...");
   #endif
@@ -732,12 +704,12 @@ void control_SMC_temp (StateVals *vals)
   static float temp_old, old_millis,current_millis,pendiente,error_temp;
   float current_step = millis()%PERIODO;
   current_millis = millis();
-  pendiente = (vals->plate_temp-temp_old)/(current_millis-old_millis);
+  vals->temp_slope = (vals->plate_temp-temp_old)/(current_millis-old_millis);
   error_temp = vals->target_humidity+40 - vals->plate_temp;
-
-
+  static uint32_t over_temp_counter = 0;
+  static uint32_t last_overtemp_time;
     
-  if(pendiente < KP_SMC*error_temp)
+  if(vals->temp_slope < KP_SMC*error_temp)
   {
     //vals->plate_relay_cmd = 1;
     //vals->duty_cycle = 30;
@@ -746,6 +718,11 @@ void control_SMC_temp (StateVals *vals)
   {
     //vals->plate_relay_cmd = 0;
     vals->duty_cycle = 0;
+  }
+
+  if(!les_alarms.is_dry && vals->overtemp_frequency > DRY_TANK_OVERTEMP_FREQ)
+  {
+    les_alarms.is_dry = true;
   }
   old_millis = millis();
   temp_old = vals->plate_temp;
@@ -766,15 +743,16 @@ void control_SMC_temp (StateVals *vals)
 
 
   //TODO: Make it a different function
-  if (vals->plate_temp > MAX_PLATE_TEMP)
+  if (vals->plate_temp > MAX_PLATE_TEMP && !vals->is_over_temp_flag)
   {
     vals->is_over_temp_flag = 1;
+    vals->overtemp_frequency = 3600000/(millis()-last_overtemp_time);
+    last_overtemp_time = millis();
   }
-  if (vals->plate_temp < MAX_PLATE_TEMP-15 && vals->is_over_temp_flag)
+  else if (vals->plate_temp < MAX_PLATE_TEMP-15 && vals->is_over_temp_flag)
   {
     vals->is_over_temp_flag = 0;
   }
-
 
 }
 
@@ -1297,6 +1275,10 @@ void write_main_menu(StateVals *vals, TempTarget *target)
   {
     sprintf(target->buffer, " %c%2d%cC   %c%3d%%  %2dLPM %c%c:%2d%% ON ", byte(0), (int)vals->after_hose_temp, byte(2), byte(1), (int)printed_est_humidity,(int)vals->current_airflow, byte(4), byte(5),(int)vals->o2_concentration/10);
   }
+  else if(sys_state.state == PAUSED) 
+  {
+    sprintf(target->buffer, " %c%2d%cC   %c%3d%%  %2dLPM %c%c:%2d%% PAU", byte(0), (int)vals->after_hose_temp, byte(2), byte(1), (int)printed_est_humidity,(int)vals->current_airflow, byte(4), byte(5),(int)vals->o2_concentration/10);
+  }
   else
   {
     sprintf(target->buffer, " %c%2d%cC   %c%3d%%  %2dLPM %c%c:%2d%% OFF", byte(0), (int)vals->after_hose_temp, byte(2), byte(1), (int)printed_est_humidity, (int)vals->current_airflow, byte(4), byte(5),(int)vals->o2_concentration/10);
@@ -1422,7 +1404,50 @@ float integral_control(float i_control[256], uint16_t isize)
   return (sum);
 }
 
-void alarm_manager(StateVals *vals, Alarms *alarm)
+void alarm_manager(StateVals *vals, Alarms *alarm, SysState *sys)
+{
+  char lcd_buf[50];
+  if(alarm->new_alarm)
+  {
+    if(vals->plate_temp>MAX_PLATE_TEMP)
+    {
+      alarm->is_plate_too_hot = 1;
+    }
+    if(1)
+    {
+      alarm->is_ready_working = 1;
+    }
+    if(1)
+    {
+      alarm->is_setting_up = 1;
+    }
+    if(1)
+    {
+      alarm->is_in_stand_by = 1;
+    }
+    if(alarm->is_dry)
+    {
+      digitalWrite(BUZZER_PIN, HIGH);
+      sys->state = PAUSED;
+      snprintf(sys->stop_screen, sizeof(sys->stop_screen), "SIN AGUA");
+    }
+    if(vals->current_airflow > 100)
+    {
+      alarm->has_unusual_flow = 1;
+    }
+      if(1)
+    {
+      alarm->has_sensor_fault = 1;
+    }
+    if(1)
+    {
+      alarm->error = 1;
+    }
+    alarm->new_alarm = false;
+  }
+}
+
+void alarm_manager_old(StateVals *vals, Alarms *alarm)
 {
   if(vals->plate_temp>MAX_PLATE_TEMP)
   {
@@ -1440,9 +1465,9 @@ void alarm_manager(StateVals *vals, Alarms *alarm)
   {
     alarm->is_in_stand_by = 1;
   }
-    if(vals->plate_temp>MAX_PLATE_TEMP+20)
+  if(vals->plate_temp>MAX_PLATE_TEMP+20)
   {
-    alarm->is_dry = 1;
+    // alarm->is_dry = 1;
   }
   if(vals->current_airflow > 100)
   {
