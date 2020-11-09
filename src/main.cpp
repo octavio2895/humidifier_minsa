@@ -32,15 +32,12 @@
 
 #include <Arduino.h>
 #include <SimpleDHT.h>
-#include <Thermistor.h>
-#include <NTC_Thermistor.h>
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
 #include <RotaryEncoder.h>
 #include <ClickButton.h>
 #include <math.h>
-#include "gasboard7500E.h"
-#include <HardwareSerial.h>
+#include <gasboard7500E.h>
 #include <DallasTemperature.h>
 #include <OneWire.h> 
 #include <customChars.h>
@@ -118,11 +115,10 @@ HardwareSerial Serial3(PB11, PB10);
 #define KP_PD_TEMP              8.5
 #define KP_PD_TEMP_MOD          3
 #define PERIODO                 2000
-#define KP_FAN                  100
+#define KP_FAN                  0.5
 #define KD_FAN                  0
-#define KI_FAN                  0.04
+#define KI_FAN                  0.0
 #define KP_SMC                  0.01
-#define MAX_PWM_MODIFIER        500
 
 //Cursor Locations
 #define POSIBLE_POSITIONS       5
@@ -709,14 +705,8 @@ void control_SMC_temp (StateVals *vals)
   static uint32_t over_temp_counter = 0;
   static uint32_t last_overtemp_time;
     
-  if(vals->temp_slope < KP_SMC*error_temp)
+  if(vals->temp_slope >= KP_SMC*error_temp)
   {
-    //vals->plate_relay_cmd = 1;
-    //vals->duty_cycle = 30;
-  }
-  else
-  {
-    //vals->plate_relay_cmd = 0;
     vals->duty_cycle = 0;
   }
 
@@ -761,7 +751,7 @@ void control_PID_Fan(StateVals *vals)
   static float error_airflow_current;
   static float error_airflow_old;
   static float delta_error_airflow_current, integral_error_airflow_current;
-  static uint32_t  pwm_modifier, pwm_const;
+  static int32_t  pwm_modifier, pwm_const;
 
   
   static uint16_t old_millis, integral_num = 0;
@@ -798,7 +788,7 @@ void control_PID_Fan(StateVals *vals)
   //Calculate PWM modifier
   pwm_modifier = (KP_FAN * error_airflow_current + KI_FAN * integral_error_airflow_current +  KD_FAN * delta_error_airflow_current);
 
-  vals->fan_pwm = pwm_modifier;
+  vals->fan_pwm = vals->fan_pwm + pwm_modifier;
 
   if (error_airflow_current < 1.5 && error_airflow_current > -1.5 && !pwm_bool)
   {
@@ -969,16 +959,14 @@ void read_flow(StateVals *vals)
   #endif
   float TMP_Therm_ADunits = analogRead(WIND_THERM_PIN);
   float RV_Wind_ADunits = analogRead(WIND_SPEED_PIN);
-  vals->adc_flow_t = TMP_Therm_ADunits;
-  vals->adc_flow_v = RV_Wind_ADunits;
   float x = RV_Wind_ADunits;
   float y = TMP_Therm_ADunits;
   static float x_prom,y_prom,sensor_airspeed;
 
 
   static uint8_t speed_num = 0;
-  static float x_array[10] {0,0,0,0,0,0,0,0,0,0};
-  static float y_array[10] {0,0,0,0,0,0,0,0,0,0};
+  static float x_array[16] {0,0,0,0,0,0,0,0,0,0};
+  static float y_array[16] {0,0,0,0,0,0,0,0,0,0};
   
   x_array[speed_num] = x;
   y_array[speed_num] = y;
@@ -1016,14 +1004,6 @@ void read_flow(StateVals *vals)
 
 void read_o2(StateVals *vals, TempTarget *target)
 {
-    // at least 1 byte from UART arrived
-  if(vals->o2_test%100>19)
-  {
-    //o2sens_init();
-    //vals->o2_test = 0;
-    //o2sens_clearNewData(); // clear the new packet flag
-  }
-  //vals->o2_buffer = o2sens_getRawBuffer();
 
   o2sens_feedUartByte(Serial3.read()); // give byte to the parser
   vals->o2_test = vals->o2_test + 1;
@@ -1062,9 +1042,7 @@ void read_encoder_button(StateVals *vals, TempTarget *target)
     }
     else if(vals->is_config_mode)
     {
-      vals->is_possible_condition = 0; // Set to 0 when using curve control mode
-      check_fio2_flow(vals,target);
-      
+      vals->is_possible_condition = 0; // Set to 0 when using curve control mode      
       if(vals->is_possible_condition)
       {
         vals->is_config_mode = 0;
