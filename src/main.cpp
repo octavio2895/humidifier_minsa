@@ -80,7 +80,7 @@ HardwareSerial Serial3(PB11, PB10);
 #define LCD_SPACE_SYMBOL        0x20  //Space symbol from lcd ROM, see p.9 of GDM2004D datasheet.
 #define DRY_TANK_OVERTEMP_FREQ  5
 #define LOW_HUM_THRESHOLD       75  //Highest humidity that can trigger dry alarm
-#define LOW_HUM_TIMEOUT         60000 // Time required to trigger dry alarm
+#define LOW_HUM_TIMEOUT         90000 // Time required to trigger dry alarm
 // #define DEBUG
 
 // Timming
@@ -305,6 +305,7 @@ void sensirion_restart();
 void sensirion_begin();
 uint8_t calcCRC(char buff[], int num);
 void sensor_check(StateVals *vals,TempTarget *target);
+void reset_alarms(StateVals *vals, Alarms *alarms);
 
 
 
@@ -640,9 +641,8 @@ void sensor_check(StateVals *vals, TempTarget *target)
 void control_PD_humidity(StateVals *vals)
 {
   static float error_humidity_current;
-  static float error_humidity_old, error_air_temp;
+  static float error_air_temp;
   float current_step = millis()%PERIODO;
-  static float old_millis;
 
   vals->clock = current_step;
   //Read error values
@@ -653,8 +653,7 @@ void control_PD_humidity(StateVals *vals)
   vals->duty_cycle = (KP_PD_HUM * error_humidity_current + (KP_PD_TEMP+KP_PD_TEMP_MOD*vals->set_o2_flow/40) * error_air_temp);
   
   //Overwrite old error values
-  error_humidity_old = error_humidity_current;
-  old_millis = millis();
+  if(vals->is_alarm) vals->duty_cycle = 0;
 
   if (vals->duty_cycle > 60)
   {
@@ -705,7 +704,7 @@ void control_SMC_temp (StateVals *vals)
   old_millis = millis();
   temp_old = vals->plate_temp;
 
-  if (vals->is_over_temp_flag)
+  if (vals->is_over_temp_flag || vals->is_alarm)
   {
     vals->duty_cycle = 0;
   }
@@ -796,7 +795,7 @@ void control_PID_Fan(StateVals *vals)
   {
     vals->fan_pwm = 255;       
   }
-  else if (vals->fan_pwm < 0)
+  else if (vals->fan_pwm < 0 || vals->is_alarm)
   {
     vals->fan_pwm = 0;       
   }
@@ -963,57 +962,82 @@ void read_o2(StateVals *vals, TempTarget *target)
 void read_encoder_button(StateVals *vals, TempTarget *target)
 {
   button1.Update();
-  if(button1.clicks == 1 && (vals->is_config_mode || vals->is_debug_mode)) 
+  if(sys_state.state==PLAY)
   {
-    vals->button_counter++;
-    if(vals->button_counter%POSIBLE_POSITIONS == 3 && vals->is_config_mode)
+    if(button1.clicks == 1 && (vals->is_config_mode || vals->is_debug_mode)) 
     {
       vals->button_counter++;
+      if(vals->button_counter%POSIBLE_POSITIONS == 3 && vals->is_config_mode)
+      {
+        vals->button_counter++;
+      }
+      target->is_init_encoder_position = 1;
     }
-    target->is_init_encoder_position = 1;
-  }
-  else if(button1.clicks == -1 )
-  {
-    //Screen state machine
-    beep_creator(vals,BEEP_ONCE);
-    if(vals->is_main_menu)
+    else if(button1.clicks == -1 )
     {
-      //Just to be safe.
-      encoder.setPosition(10000);
-      vals->is_config_mode = 1;
-      vals->is_main_menu = 0;  
-      vals->button_counter = 0;
-      vals->is_debug_mode = 0;
-    }
-    else if(vals->is_config_mode)
-    {
+      //Screen state machine
+      beep_creator(vals,BEEP_ONCE);
+      if(vals->is_main_menu)
+      {
+        //Just to be safe.
+        encoder.setPosition(10000);
+        vals->is_config_mode = 1;
+        vals->is_main_menu = 0;  
+        vals->button_counter = 0;
+        vals->is_debug_mode = 0;
+      }
+      else if(vals->is_config_mode)
+      {
 
-      vals->is_config_mode = 0;
-      vals->is_main_menu = 1;
-      vals->is_debug_mode = 0;
-      vals->target_temp = target->target_temp;
-      vals->target_humidity = target->target_humidity;
-      vals->target_airflow = target->target_v;
-      vals->pwr_state = target->target_st;
-      vals->target_fio2 = target->target_fio2;
+        vals->is_config_mode = 0;
+        vals->is_main_menu = 1;
+        vals->is_debug_mode = 0;
+        vals->target_temp = target->target_temp;
+        vals->target_humidity = target->target_humidity;
+        vals->target_airflow = target->target_v;
+        vals->pwr_state = target->target_st;
+        vals->target_fio2 = target->target_fio2;
+      }
+      else if(vals->is_debug_mode)
+      {
+        vals->is_config_mode = 0;
+        vals->is_main_menu = 1;
+        vals->is_debug_mode = 0;
+      }
+      
     }
-    else if(vals->is_debug_mode)
+    else if(button1.clicks == 2 && vals->is_main_menu)
     {
       vals->is_config_mode = 0;
-      vals->is_main_menu = 1;
-      vals->is_debug_mode = 0;
+      vals->is_main_menu = 0;  
+      vals->is_debug_mode = 1;
+      vals->current_beep.beep_id++;
+      vals->current_beep.beep_type=BEEP_CONTINUOS;
+      vals->current_beep.beep_clock = vals->current_beep.beep_type;
+    }
+  }
+  else
+  {
+    if(button1.clicks == -1 )
+    {
+      beep_creator(vals, BEEP_ONCE);
+      if(vals->is_alarm)reset_alarms(vals, &les_alarms);
+      sys_state.state = PLAY;
+      sys_state.stop_screen_displayed = false;
     }
     
   }
-  else if(button1.clicks == 2 && vals->is_main_menu)
-  {
-    vals->is_config_mode = 0;
-    vals->is_main_menu = 0;  
-    vals->is_debug_mode = 1;
-    vals->current_beep.beep_id++;
-    vals->current_beep.beep_type=BEEP_CONTINUOS;
-    vals->current_beep.beep_clock = vals->current_beep.beep_type;
-  }
+  
+}
+
+void reset_alarms(StateVals *vals, Alarms *alarms)
+{
+  vals->is_alarm = false;
+  alarms->is_plate_too_hot = 0;
+  alarms->is_dry = 0;
+  alarms->is_ready_working = 0;
+  alarms->has_sensor_fault = 0;
+  alarms->has_unusual_flow = 0;
 }
 
 void manage_cursor(StateVals *vals)
@@ -1318,8 +1342,8 @@ void alarm_manager(StateVals *vals, Alarms *alarm, SysState *sys)
     }
     if(alarm->is_dry)
     {
-      digitalWrite(BUZZER_PIN, HIGH);
       sys->state = PAUSED;
+      vals->is_alarm = true;
       snprintf(sys->stop_screen, sizeof(sys->stop_screen), "SIN AGUA");
     }
     if(vals->current_airflow > 100)
