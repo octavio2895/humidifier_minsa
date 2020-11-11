@@ -49,9 +49,6 @@ bool has_vernum = false;
 
 HardwareSerial Serial3(PB11, PB10);
 
-// #define OUTPUT_BUFFER_SIZE 32
-// char output_buffer[OUTPUT_BUFFER_SIZE];
-
 // Physical properties
 #define B_VALUE                 3950
 #define HUMIDITY_TEMP           95
@@ -89,14 +86,13 @@ HardwareSerial Serial3(PB11, PB10);
 #define DHT_UPDATE_DELAY        2005
 #define EXIT_HUMIDITY_ESTIMATION_DELAY  100
 #define BANGBANG_CONTROL_DELAY  100
-#define PID_FAN_CONTROL_DELAY   50
-#define PID_UPDATE_DELAY        100
+#define PID_FAN_CONTROL_DELAY   1000
 #define EXECUTE_DELAY           10
 #define ENCODER_UPDATE_DELAY    10
 #define SCREEN_UPDATE_DELAY     500
 #define BEEP_UPDATE_DELAY       10
 #define BEEP_ONCE_DURATION      300
-#define ALARM_UPDATE_DELAY       10
+#define ALARM_UPDATE_DELAY      10
 #define O2_UPDATE_DELAY         0
 #define DS_UPDATE_DELAY         1000
 #define HOSE_BB_UPDATE_DELAY    100
@@ -151,6 +147,7 @@ uint32_t  next_flow_update, next_termistor_update, next_dht_update,
           next_screen_update, next_beep_update, next_alarm_update, 
           next_o2_update, next_ds_update, next_hose_bb_update, 
           get_vtemp_update, o2_start_time;
+
 
 // Structs
 enum BeepType
@@ -222,9 +219,9 @@ struct StateVals
   float set_o2_flow = 0;
   bool hose_state = 0;
   float vapor_target_temp = 0;
+
   float overtemp_frequency = 0;
   float temp_slope;
-
   uint16_t adc_flow_t = 0;
   uint16_t adc_flow_v = 0;
   
@@ -295,7 +292,6 @@ ClickButton button1(BUTTON, LOW, CLICKBTN_PULLUP);
 OneWire oneWire(ONE_WIRE_BUS); 
 DallasTemperature sensors(&oneWire);
 
-
 // Prototypes
 void read_flow(StateVals *vals);
 void read_thermistor(StateVals *vals);
@@ -331,8 +327,6 @@ uint8_t calcCRC(char buff[], int num);
 void sensor_check(StateVals *vals,TempTarget *target);
 void reset_alarms(StateVals *vals, Alarms *alarms);
 
-
-
 void setup() 
 {
 // // Make custom characters:
@@ -360,8 +354,6 @@ void setup()
   encoder.begin();
   attachInterrupt(digitalPinToInterrupt(PIN_A), encoderISR, CHANGE);
   attachInterrupt(digitalPinToInterrupt(PIN_B), encoderISR, CHANGE);
-  
-
   o2sens_init();
   Serial3.begin(9600,SERIAL_8N2);
 
@@ -561,11 +553,9 @@ void loop()
   {
     if (millis() > next_encoder_update) 
     {
-
       read_encoder_button(&state_vals, &target_vals);
       next_encoder_update = millis() + ENCODER_UPDATE_DELAY;
       if(next_encoder_update < millis()) next_encoder_overflow_flag = true;
-
     }
   }
   else if(millis() < next_encoder_update) next_encoder_overflow_flag = false;
@@ -627,12 +617,12 @@ void estimate_exit_humidity(StateVals *vals)
     les_alarms.is_dry = true;
     low_hum_timer_started = false;
   }
+
   vals->vapor_abs_humidity = (6.112*exp((17.67*vals->vapor_temp)/(vals->vapor_temp + 243.5))*(vals->vapor_humidity)*2.1674)/(273.15+vals->vapor_temp); //[g/m³]
   float entry_density = get_density(vals->vapor_temp);
   float exit_density = get_density(vals->after_hose_temp);
   vals->est_abs_humidity = vals->vapor_abs_humidity * exit_density/entry_density; //water_mass_flow/exit_airflow;
   vals->est_humidity = ((273.15+vals->after_hose_temp)*vals->est_abs_humidity)/(6.112*exp((17.67*vals->after_hose_temp)/(vals->after_hose_temp + 243.5))*2.1674);
-
   float sq_flow = vals->current_airflow*vals->current_airflow;
   float flow_point_pwm = 0.068*sq_flow + 35;
   if(vals->fan_pwm < flow_point_pwm) 
@@ -707,7 +697,7 @@ void control_PD_humidity(StateVals *vals)
     vals->duty_cycle = 0;
   }
 
-  //TODO: change into a bool alarm
+  //TODO: change into a bool
   if (vals->est_humidity > vals->target_humidity)
   {
     vals->duty_cycle = 0;
@@ -738,6 +728,7 @@ void control_SMC_temp (StateVals *vals)
   if(!les_alarms.is_dry && vals->overtemp_frequency > DRY_TANK_OVERTEMP_FREQ)
   {
     les_alarms.is_dry = true;
+
   }
   old_millis = millis();
   temp_old = vals->plate_temp;
@@ -756,7 +747,6 @@ void control_SMC_temp (StateVals *vals)
     vals->plate_relay_cmd = false;
   }
 
-
   //TODO: Make it a different function
   if (vals->plate_temp > MAX_PLATE_TEMP && !vals->is_over_temp_flag)
   {
@@ -768,7 +758,6 @@ void control_SMC_temp (StateVals *vals)
   {
     vals->is_over_temp_flag = 0;
   }
-
 }
 
 void control_PID_Fan(StateVals *vals)
@@ -777,8 +766,6 @@ void control_PID_Fan(StateVals *vals)
   static float error_airflow_old;
   static float delta_error_airflow_current, integral_error_airflow_current;
   static int32_t  pwm_dot, pwm_const;
-
-  
   static uint16_t old_millis, integral_num = 0;
   static float integral_array[180];
   static bool init = 0, pwm_bool = 0;
@@ -810,6 +797,7 @@ void control_PID_Fan(StateVals *vals)
   pwm_dot = (KP_FAN * error_airflow_current + KI_FAN * integral_error_airflow_current +  KD_FAN * delta_error_airflow_current);
 
   vals->fan_pwm = vals->fan_pwm + pwm_dot;
+
 
   if (error_airflow_current < 1.5 && error_airflow_current > -1.5 && !pwm_bool)
   {
@@ -854,7 +842,6 @@ void execute(StateVals *vals)
       vals->is_vapor_too_hot = 0;
     }
     
-
     if(vals->plate_relay_cmd && !vals->is_vapor_too_hot)
     {
       digitalWrite(PLATE_RELAY_PIN, LOW);
@@ -876,14 +863,10 @@ void execute(StateVals *vals)
     digitalWrite(PLATE_RELAY_PIN, HIGH);
     vals->plate_relay_state = false;
   }
-  
 }
 
 void read_dht(StateVals *vals)
 {
-  #ifdef DEBUG
-  Serial.println("Reading DHT...");
-  #endif
   float humidity, temp;
   int err = SimpleDHTErrSuccess; 
   if ((err = dht22.read2(&temp, &humidity, NULL)) != SimpleDHTErrSuccess && !les_alarms.hum_sens_fault) 
@@ -892,8 +875,6 @@ void read_dht(StateVals *vals)
     les_alarms.hum_sens_fault = true;
     return;
   }
-  // humidity = dht.readHumidity();
-  // temp = dht.readTemperature();
   if(isnan(humidity)||isnan(temp))
     {
       vals->vapor_humidity = 0.0;
@@ -907,9 +888,6 @@ void read_dht(StateVals *vals)
 
 void read_thermistor(StateVals *vals)
 {
-  #ifdef DEBUG
-  Serial.println("Reading thermistor...");
-  #endif
   static uint8_t temp_num = 0;
   static float temp_array[256]; // TODO: check array size
   static bool init = 0;
@@ -938,16 +916,11 @@ void read_thermistor(StateVals *vals)
 
 void read_flow(StateVals *vals) 
 {
-  #ifdef DEBUG
-  Serial.println("Reading flow...");
-  #endif
   float TMP_Therm_ADunits = analogRead(WIND_THERM_PIN);
   float RV_Wind_ADunits = analogRead(WIND_SPEED_PIN);
   float x = RV_Wind_ADunits;
   float y = TMP_Therm_ADunits;
   static float x_prom,y_prom,sensor_airspeed;
-
-
   static uint8_t speed_num = 0;
   static float x_array[16] {0,0,0,0,0,0,0,0,0,0};
   static float y_array[16] {0,0,0,0,0,0,0,0,0,0};
@@ -957,18 +930,18 @@ void read_flow(StateVals *vals)
   speed_num++; 
 
  
-  if (speed_num > 0)
+  if (speed_num > 31)
   {
-    x_prom = x;//arr_average(x_array, sizeof(x_array));
-    y_prom = y;//arr_average(y_array, sizeof(y_array));
-    //sensor_airspeed =  1.133423908e-4f * x_prom*x_prom - 1.159148562e-4f * x_prom*y_prom -  7.96225819e-6f * y_prom*y_prom -  6.244728852e-2f * x_prom + 8.898163594e-2f * y_prom - 13.26006647;
-    //sensor_airspeed = 8.425983316e-4f  * x_prom*x_prom - 1.175031223e-3f * x_prom*y_prom + 4.294234517e-4f * y_prom*y_prom - 1.268141388e-1f * x_prom + 8.589904629e-2f * y_prom - 4.817979033f;
-    //sensor_airspeed =  2.07278786e-7 *x_prom*x_prom*x_prom*x_prom - 1.258160808e-6 *x_prom*x_prom*x_prom*y_prom + 2.329122632e-6 *x_prom*x_prom*y_prom*y_prom - 1.684204298e-6 *x_prom* y_prom*y_prom*y_prom + 4.161528134e-7 *y_prom*y_prom*y_prom*y_prom + 1.865690411e-4 *x_prom*x_prom*x_prom - 2.397625704e-4 *x_prom*x_prom*y_prom - 1.05055706e-4 *x_prom*y_prom*y_prom + 1.293264445e-4 *y_prom*y_prom*y_prom - 1.107078016e-1 *x_prom*x_prom + 2.173253746e-1 *x_prom* y_prom - 7.790431822e-2 *y_prom*y_prom + 5.091561295 *x_prom - 17.07396366 *y_prom + 1779.975948;
-    sensor_airspeed =  -1.056891481e-5 *x_prom*x_prom*x_prom + 3.245687769e-5 *x_prom*x_prom * y_prom - 3.605536507e-5 *x_prom *y_prom*y_prom + 1.138111633e-5 *y_prom*y_prom*y_prom + 2.436108257e-3 *x_prom*x_prom - 1.102028777e-3 *x_prom*y_prom + 3.695040756e-3 *y_prom*y_prom - 1.163719965 *x_prom - 1.820651701 *y_prom + 580.7883239;
+    x_prom = arr_average(x_array, sizeof(x_array));
+    y_prom = arr_average(y_array, sizeof(y_array));
+    //sensor_airspeed =  -1.056891481e-5 *x_prom*x_prom*x_prom + 3.245687769e-5 *x_prom*x_prom * y_prom - 3.605536507e-5 *x_prom *y_prom*y_prom + 1.138111633e-5 *y_prom*y_prom*y_prom + 2.436108257e-3 *x_prom*x_prom - 1.102028777e-3 *x_prom*y_prom + 3.695040756e-3 *y_prom*y_prom - 1.163719965 *x_prom - 1.820651701 *y_prom + 580.7883239;
+    sensor_airspeed = 1.694651444e-3 *y_prom*y_prom - 2.392395736e-3 *x_prom*y_prom + 1.974089026e-3 *x_prom*x_prom - 0.800739832 *y_prom - 7.872175317e-1 *x_prom + 496.3395487;
     speed_num = 0;
+
   }
 
-  
+  vals->adc_flow_v = arr_average(x_array, sizeof(x_array));
+  vals->adc_flow_t = arr_average(y_array, sizeof(y_array));
   
   if (sensor_airspeed <  0)
   {
@@ -977,7 +950,7 @@ void read_flow(StateVals *vals)
   vals->current_airspeed = sensor_airspeed;
   if(vals->pwr_state)
   {
-    vals->current_airflow = sensor_airspeed;//vals->current_airspeed * ((3.1415/4) * pow(DIAMETER ,2)) * 60000;
+    vals->current_airflow = sensor_airspeed;
   }
   else
   {
@@ -1046,7 +1019,6 @@ void read_encoder_button(StateVals *vals, TempTarget *target)
         vals->is_main_menu = 1;
         vals->is_debug_mode = 0;
       }
-      
     }
     else if(button1.clicks == 2 && vals->is_main_menu)
     {
@@ -1083,7 +1055,6 @@ void manage_cursor(StateVals *vals)
 {
   if(vals->is_config_mode)
   {
-    
     switch(vals->button_counter%POSIBLE_POSITIONS)
     {
       case TOP_LEFT:
@@ -1107,18 +1078,15 @@ void manage_cursor(StateVals *vals)
   else
   {
     lcd.noBlink();
-  }
-  
+  } 
 }
 
 void write_config_menu(StateVals *vals, TempTarget *target)
 {
-  
   static uint32_t last_enc = 10000;
   static uint32_t value_encoder;
   //Rango de los cases
   static char cases[5] = {7,21,DELTA_V,46,4}; //3rd value prev 41isnan
-
   static char lcd_st[3][4] = {"OFF","ON "};
 
   //Initializes 
@@ -1198,6 +1166,7 @@ void write_config_menu(StateVals *vals, TempTarget *target)
 
   
  //Change the target value using the encoder value as reference
+
   value_encoder = value_encoder + (int)((encoder.getPosition()/2-last_enc/2));
   target->encoder_position = (value_encoder)%(cases[vals->button_counter%POSIBLE_POSITIONS]);
   last_enc = encoder.getPosition();
@@ -1252,7 +1221,6 @@ void write_main_menu(StateVals *vals, TempTarget *target)
 
 void write_debug_menu(StateVals *vals, TempTarget *target)
 {
-
   switch (vals->button_counter%POSIBLE_POSITIONS)
       {
       case TOP_LEFT:
@@ -1492,7 +1460,6 @@ void hose_bang_bang(StateVals *vals)
 
 void get_target_temperature(StateVals *vals)
 {
-
   float target_vapor_temp, error_humidity, est_target_abs_humidity;
   //Calculate abs_humidity with target values
   float target_abs_humidity = (6.112*exp((17.67*vals->target_temp)/(vals->target_temp + 243.5))*(vals->target_humidity)*2.1674)/(273.15+vals->target_temp); //[g/m³]
@@ -1514,9 +1481,7 @@ void get_target_temperature(StateVals *vals)
   //TODO: change to a better fix
   //Default value is 33°C because I say so
   vals->vapor_target_temp = 33;
-
 }
-
 
 void calculate_flow_sensirion(StateVals *f) //TODO: Check for CRC error
 {
