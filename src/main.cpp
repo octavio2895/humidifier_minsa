@@ -130,12 +130,27 @@ HardwareSerial Serial3(PB11, PB10);
 
 //Alarm critical values
 #define MAX_PLATE_TEMP          150
+#define MIN_THERM_TEMP          10 // min readable temperature of sensor
+#define MAX_THERM_TEMP          250 // max readable temperature of sensroe
+#define MIN_EXIT_TEMP           10
+#define MAX_EXIT_TEMP           45
 #define DELTA_V                 51//101: mapped mode; 26: L/min mode
+#define MAX_CRC_ERR             8
+#define MAX_FLOW_ERRMSGS_TRIES  8
+#define MAX_FLOW_TIMEOUT_TRIES  8
+#define O2_TIMEOUT              8000
+#define MIN_PWM_SLOPE           0.07 // pwm/flow^2
+#define HOSE_DISCONNECT_TIMEOUT 10000
 #define CRC_POLYNOMIAL          (0x0131)
 
 
 // Globlas
-uint32_t next_flow_update, next_termistor_update, next_dht_update, next_flow_estimation, next_bangbang_control, next_pidfan_control, next_pid_update, next_execute, next_encoder_update, next_screen_update, next_beep_update, next_alarm_update, next_o2_update, next_ds_update, next_hose_bb_update, get_vtemp_update;
+uint32_t  next_flow_update, next_termistor_update, next_dht_update, 
+          next_flow_estimation, next_bangbang_control, next_pidfan_control, 
+          next_pid_update, next_execute, next_encoder_update, 
+          next_screen_update, next_beep_update, next_alarm_update, 
+          next_o2_update, next_ds_update, next_hose_bb_update, 
+          get_vtemp_update, o2_start_time;
 
 // Structs
 enum BeepType
@@ -247,6 +262,15 @@ struct TempTarget
 struct Alarms
 {
   bool  is_plate_too_hot;
+  bool  plate_therm_fault;
+  bool  exit_therm_fault;
+  bool  exit_therm_oob;
+  bool  hum_sens_fault;
+  bool  flow_sens_fault;
+  bool  flow_err_msgs;
+  bool  flow_crc_err;
+  bool  o2_fault;
+  bool  hose_disconnect;
   bool  is_ready_working;
   bool  is_setting_up;
   bool  is_in_stand_by;
@@ -376,6 +400,17 @@ void loop()
   Alarms *alarm = &les_alarms;
   static bool next_beep_overflow_flag = false, flow_estimate_overflow_flag = false, thermistor_update_overflow_flag = false, dht_update_overflow_flag = false, next_estimation_overflow_flag = false, next_bangbang_overflow_flag = false, next_pidfan_overflow_flag = false, pid_update_overflow_flag = false, next_execute_overflow_flag = false, next_encoder_overflow_flag = false, screen_update_overflow_flag = false, next_alarm_overflow_flag = false, o2_update_overflow_flag = false, ds_update_overflow_flag = false, hose_bb_overflow_flag = false, get_vtemp_overflow_flag = false;
 
+  if(sys_state.state == STOP)
+  {
+    while(0)
+    {
+      digitalWrite(BUZZER_PIN, HIGH);
+      digitalWrite(HOSE_PIN, LOW);
+      digitalWrite(FAN_PIN, LOW);
+      digitalWrite(PLATE_RELAY_PIN, LOW);
+    }
+  }
+
   if (!next_beep_overflow_flag)
   {
     if(millis() > next_beep_update )
@@ -466,8 +501,16 @@ void loop()
   
   while (Serial3.available())
   {
+    o2_start_time = millis();
     read_o2(&state_vals, &target_vals);
   }
+
+  if(millis() - o2_start_time > O2_TIMEOUT)
+  {
+    les_alarms.new_alarm = true;
+    les_alarms.o2_fault = true;
+  }
+
 
   if (!next_estimation_overflow_flag)
   {
@@ -567,8 +610,8 @@ void loop()
 
 void estimate_exit_humidity(StateVals *vals)
 {
-  static uint32_t low_hum_start_time;
-  static bool low_hum_timer_started = false;
+  static uint32_t low_hum_start_time, hose_disconnect_timer;
+  static bool low_hum_timer_started = false, hose_disconnect_timer_started = false;
   if(!low_hum_timer_started && vals->vapor_humidity<LOW_HUM_THRESHOLD && !les_alarms.is_dry)
   {
     low_hum_start_time = millis();
@@ -590,33 +633,28 @@ void estimate_exit_humidity(StateVals *vals)
   vals->est_abs_humidity = vals->vapor_abs_humidity * exit_density/entry_density; //water_mass_flow/exit_airflow;
   vals->est_humidity = ((273.15+vals->after_hose_temp)*vals->est_abs_humidity)/(6.112*exp((17.67*vals->after_hose_temp)/(vals->after_hose_temp + 243.5))*2.1674);
 
-  #ifdef DEBUG
-  char serial_buff[100];
-  sprintf(serial_buff, "DEBUG: DeltaT is estimated to be about %2.2f °C", delta_t);
-  Serial.println(serial_buff);
-  // serial_buff = "";
-  sprintf(serial_buff, "DEBUG: AbsHumd at hose entry is estimated to be about %1.5f g/m3", vals->vapor_abs_humidity);
-  Serial.println(serial_buff);
-  // serial_buff = "";
-  sprintf(serial_buff, "DEBUG: EntryDensity at hose entry is estimated to be about %1.5f kg/m3", entry_density);
-  Serial.println(serial_buff);
-  // serial_buff = "";
-  sprintf(serial_buff, "DEBUG: ExitDensity at hose exit is estimated to be about %1.5f kg/m3", exit_density);
-  Serial.println(serial_buff);
-  // serial_buff = "";
-  sprintf(serial_buff, "DEBUG: AirMassFlow is estimated to be about %1.5f kg/m3", air_mass_flow);
-  Serial.println(serial_buff);
-  // serial_buff = "";control_PD_humidity
-  sprintf(serial_buff, "DEBUG: WaterMassFlow is estimated to be about %1.5f kg/m3", water_mass_flow);
-  Serial.println(serial_buff);
-  // serial_buff = "";
-  sprintf(serial_buff, "DEBUG: AbsHumd at hose exit is estimated to be about %1.5f g/m3", vals->vapor_abs_humidity);
-  Serial.println(serial_buff);
-  // serial_buff = "";
-  sprintf(serial_buff, "DEBUG: RH at hose exit is estimated to be about %1.5f g/m3", vals->vapor_abs_humidity);
-  Serial.println(serial_buff);
-  // serial_buff = "";
-  #endif
+  float sq_flow = vals->current_airflow*vals->current_airflow;
+  float flow_point_pwm = 0.068*sq_flow + 35;
+  if(vals->fan_pwm < flow_point_pwm) 
+  {
+    if(!hose_disconnect_timer_started)
+    {
+      hose_disconnect_timer_started = true;
+      hose_disconnect_timer = millis();
+    }
+  }
+  else
+  {
+    hose_disconnect_timer_started = false;
+  }
+
+  if(millis() - hose_disconnect_timer > HOSE_DISCONNECT_TIMEOUT && hose_disconnect_timer_started && !les_alarms.hose_disconnect)
+  {
+    hose_disconnect_timer_started = false;
+    les_alarms.new_alarm = true;
+    les_alarms.hose_disconnect = true;
+  }
+
 }
 
 void sensor_check(StateVals *vals, TempTarget *target)
@@ -848,9 +886,10 @@ void read_dht(StateVals *vals)
   #endif
   float humidity, temp;
   int err = SimpleDHTErrSuccess; 
-  if ((err = dht22.read2(&temp, &humidity, NULL)) != SimpleDHTErrSuccess) 
+  if ((err = dht22.read2(&temp, &humidity, NULL)) != SimpleDHTErrSuccess && !les_alarms.hum_sens_fault) 
   {
-    //Serial.print("Read DHT22 failed, err="); Serial.println(err);delay(2000);
+    les_alarms.new_alarm = true;
+    les_alarms.hum_sens_fault = true;
     return;
   }
   // humidity = dht.readHumidity();
@@ -872,7 +911,7 @@ void read_thermistor(StateVals *vals)
   Serial.println("Reading thermistor...");
   #endif
   static uint8_t temp_num = 0;
-  static float temp_array[256];
+  static float temp_array[256]; // TODO: check array size
   static bool init = 0;
   if (!init)
     {
@@ -890,6 +929,11 @@ void read_thermistor(StateVals *vals)
   vals->plate_temp = arr_average(temp_array, sizeof(temp_array)) - 7;
   vals->adc_therm = adc_read;
   vals->them_resistance = resistance;
+  if((vals->plate_temp > MAX_THERM_TEMP || vals->plate_temp < MIN_THERM_TEMP) && !les_alarms.new_alarm) // Out of bounds thermistor
+  {
+    les_alarms.new_alarm = true;
+    les_alarms.plate_therm_fault = true;
+  }
 }
 
 void read_flow(StateVals *vals) 
@@ -944,7 +988,6 @@ void read_flow(StateVals *vals)
 
 void read_o2(StateVals *vals, TempTarget *target)
 {
-
   o2sens_feedUartByte(Serial3.read()); // give byte to the parser
   vals->o2_test = vals->o2_test + 1;
   if (o2sens_hasNewData()) // a complete packet has been processed
@@ -955,7 +998,6 @@ void read_o2(StateVals *vals, TempTarget *target)
     vals->o2_flow = o2sens_getFlowRate16();
     vals->o2_temp = o2sens_getTemperature16(); 
   }
-  
   vals->o2_test = vals->o2_test + 2;
 }
 
@@ -1016,7 +1058,7 @@ void read_encoder_button(StateVals *vals, TempTarget *target)
       vals->current_beep.beep_clock = vals->current_beep.beep_type;
     }
   }
-  else
+  else if(sys_state.state == PAUSED)
   {
     if(button1.clicks == -1 )
     {
@@ -1033,11 +1075,8 @@ void read_encoder_button(StateVals *vals, TempTarget *target)
 void reset_alarms(StateVals *vals, Alarms *alarms)
 {
   vals->is_alarm = false;
-  alarms->is_plate_too_hot = 0;
+  alarms->hose_disconnect = 0;
   alarms->is_dry = 0;
-  alarms->is_ready_working = 0;
-  alarms->has_sensor_fault = 0;
-  alarms->has_unusual_flow = 0;
 }
 
 void manage_cursor(StateVals *vals)
@@ -1082,7 +1121,7 @@ void write_config_menu(StateVals *vals, TempTarget *target)
 
   static char lcd_st[3][4] = {"OFF","ON "};
 
-  //Define range of values for each variable
+  //Initializes 
   for(int i=0;i<sizeof(target->range_temp);i++)
   {
     target->range_temp[i] = i+31;
@@ -1321,36 +1360,55 @@ float integral_control(float i_control[256], uint16_t isize)
 
 void alarm_manager(StateVals *vals, Alarms *alarm, SysState *sys)
 {
-  char lcd_buf[50];
   if(alarm->new_alarm)
   {
-    if(vals->plate_temp>MAX_PLATE_TEMP)
+    if(alarm->plate_therm_fault)
     {
-      alarm->is_plate_too_hot = 1;
+      sys->state = STOP;
+      vals->is_alarm = true;
+      snprintf(sys->stop_screen, sizeof(sys->stop_screen), "E-ST1: PLATO");
     }
-    if(1)
+    if(alarm->hum_sens_fault)
     {
-      alarm->is_ready_working = 1;
+      sys->state = STOP;
+      vals->is_alarm = true;
+      snprintf(sys->stop_screen, sizeof(sys->stop_screen), "E-SH: HUMSENS");
     }
-    if(1)
+    if(alarm->exit_therm_fault || alarm->exit_therm_oob)
     {
-      alarm->is_setting_up = 1;
+      sys->state = STOP;
+      vals->is_alarm = true;
+      snprintf(sys->stop_screen, sizeof(sys->stop_screen), "E-ST2: MANG");
     }
-    if(1)
+    if(alarm->flow_sens_fault || alarm->flow_err_msgs || alarm->flow_crc_err)
     {
-      alarm->is_in_stand_by = 1;
+      sys->state = STOP;
+      vals->is_alarm = true;
+      snprintf(sys->stop_screen, sizeof(sys->stop_screen), "E-SF: FLUJO");
+    }
+    if(alarm->o2_fault)
+    {
+      sys->state = STOP;
+      vals->is_alarm = true;
+      snprintf(sys->stop_screen, sizeof(sys->stop_screen), "E-CO: O2");
     }
     if(alarm->is_dry)
     {
       sys->state = PAUSED;
       vals->is_alarm = true;
-      snprintf(sys->stop_screen, sizeof(sys->stop_screen), "SIN AGUA");
+      snprintf(sys->stop_screen, sizeof(sys->stop_screen), "A-TA: SIN AGUA");
+    }
+    if(alarm->hose_disconnect)
+    {
+      sys->state = PAUSED;
+      vals->is_alarm = true;
+      snprintf(sys->stop_screen, sizeof(sys->stop_screen), "A-MD: MANGUERA");
     }
     if(vals->current_airflow > 100)
     {
       alarm->has_unusual_flow = 1;
     }
-      if(1)
+    if(1)
     {
       alarm->has_sensor_fault = 1;
     }
@@ -1400,8 +1458,24 @@ void alarm_manager_old(StateVals *vals, Alarms *alarm)
 
 void read_ds18b20(StateVals *vals)
 {
+  DeviceAddress deviceAddress;
+  float temp;
+  if (!sensors.getAddress(deviceAddress, 0) && !les_alarms.exit_therm_fault) // DS18B20 disconnected
+  {
+    les_alarms.new_alarm = true;
+    les_alarms.exit_therm_fault = true;
+	  return;
+	}
   sensors.requestTemperatures(); // Send the command to get temperature readings 
-  vals->after_hose_temp = sensors.getTempCByIndex(0);
+  temp = sensors.getTempCByIndex(0);
+  if((temp < MIN_EXIT_TEMP || temp > MAX_EXIT_TEMP) && !les_alarms.exit_therm_oob) //DS OOB
+  {
+    les_alarms.new_alarm = true;
+    les_alarms.exit_therm_oob = true;
+	  return;
+  }
+  vals->after_hose_temp = temp;
+  return;
 }
 
 void hose_bang_bang(StateVals *vals)
@@ -1449,6 +1523,7 @@ void calculate_flow_sensirion(StateVals *f) //TODO: Check for CRC error
   char c[3] = {0 ,0 ,0};
   int i = 0;
   uint16_t data = 0;
+  static uint32_t timeout_counter, crc_fail_counter, err_mgsg_counter;
 
   Wire.requestFrom(64, 3);
   uint32_t timeout = millis() + 100;
@@ -1457,7 +1532,11 @@ void calculate_flow_sensirion(StateVals *f) //TODO: Check for CRC error
     delay(1);
     if(millis()>timeout)
     {
-      f->current_airflow = 66;
+      if(++timeout_counter >= MAX_FLOW_TIMEOUT_TRIES && !les_alarms.flow_sens_fault)
+      {
+        les_alarms.new_alarm = true;
+        les_alarms.flow_sens_fault = true;
+      }
       return;
     }
   }
@@ -1467,6 +1546,12 @@ void calculate_flow_sensirion(StateVals *f) //TODO: Check for CRC error
     {
       Wire.read();
     }
+      if(++err_mgsg_counter >= MAX_FLOW_ERRMSGS_TRIES && !les_alarms.flow_err_msgs)
+      {
+        les_alarms.new_alarm = true;
+        les_alarms.flow_err_msgs = true;
+      }
+    return;
   }
   while (Wire.available()) 
   {
@@ -1476,9 +1561,16 @@ void calculate_flow_sensirion(StateVals *f) //TODO: Check for CRC error
   uint8_t crc = calcCRC(c, 2);
   if(crc != c[2])
   {
-    f->current_airflow = 88;
+    if(++crc_fail_counter >= MAX_CRC_ERR && !les_alarms.flow_crc_err)
+    {
+      les_alarms.new_alarm = true;
+      les_alarms.flow_crc_err = true;
+    }
     return;
   }
+  crc_fail_counter = 0;
+  err_mgsg_counter = 0;
+  timeout_counter = 0;
   f->current_airflow = ((double)(data-32768))/(120);
 }
 
