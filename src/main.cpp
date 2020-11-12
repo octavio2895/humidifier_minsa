@@ -190,6 +190,7 @@ struct StateVals
   float after_hose_temp = 0;
   float est_temp = 0; // Estimated temperature after hose. °C
   float est_humidity = 0; // Estimated humidity after hose. RH%
+  float target_vapor_abs_hum = 0;
   float vapor_abs_humidity = 0; // Current absolute humidity at vapor chamber. g/m3
   float est_abs_humidity = 0; // Estimated absolute humidity after hose. g/m3
   float current_airflow = 0; // Air volumetric flow rate. Lts/min
@@ -399,7 +400,7 @@ void loop()
       digitalWrite(BUZZER_PIN, HIGH);
       digitalWrite(HOSE_PIN, LOW);
       digitalWrite(FAN_PIN, LOW);
-      digitalWrite(PLATE_RELAY_PIN, LOW);
+      digitalWrite(PLATE_RELAY_PIN, HIGH);
     }
   }
 
@@ -565,7 +566,7 @@ void loop()
     manage_cursor(&state_vals);
     if (millis() > next_screen_update) 
     {  
-      if(sys_state.state != 0)
+      if(sys_state.state != PLAY)
       {
         if(!sys_state.stop_screen_displayed)
         {
@@ -625,7 +626,7 @@ void estimate_exit_humidity(StateVals *vals)
   vals->est_humidity = ((273.15+vals->after_hose_temp)*vals->est_abs_humidity)/(6.112*exp((17.67*vals->after_hose_temp)/(vals->after_hose_temp + 243.5))*2.1674);
   float sq_flow = vals->current_airflow*vals->current_airflow;
   float flow_point_pwm = 0.068*sq_flow + 35;
-  if(vals->fan_pwm < flow_point_pwm) 
+  if(vals->fan_pwm < flow_point_pwm && sys_state.state == PLAY && vals->current_airflow > 10) 
   {
     if(!hose_disconnect_timer_started)
     {
@@ -674,11 +675,11 @@ void control_PD_humidity(StateVals *vals)
 
   vals->clock = current_step;
   //Read error values
-  error_humidity_current = vals->target_humidity - vals->vapor_humidity;
+  error_humidity_current = vals->target_vapor_abs_hum - vals->est_abs_humidity;
   error_air_temp = vals->target_temp - vals->vapor_temp;
 
   //Write new Duty Cycle value
-  vals->duty_cycle = (KP_PD_HUM * error_humidity_current + (KP_PD_TEMP+KP_PD_TEMP_MOD*vals->set_o2_flow/40) * error_air_temp);
+  vals->duty_cycle = (KP_PD_HUM * error_humidity_current); // + (KP_PD_TEMP+KP_PD_TEMP_MOD*vals->set_o2_flow/40) * error_air_temp);
   
   //Overwrite old error values
   if(vals->is_alarm) vals->duty_cycle = 0;
@@ -1460,10 +1461,10 @@ void hose_bang_bang(StateVals *vals)
 
 void get_target_temperature(StateVals *vals)
 {
-  float target_vapor_temp, error_humidity, est_target_abs_humidity;
+  float target_vapor_temp, error_humidity, est_target_abs_humidity, curr_abs_hum;
   //Calculate abs_humidity with target values
   float target_abs_humidity = (6.112*exp((17.67*vals->target_temp)/(vals->target_temp + 243.5))*(vals->target_humidity)*2.1674)/(273.15+vals->target_temp); //[g/m³]
-  
+  vals->target_vapor_abs_hum = target_abs_humidity;
   //Calculate target vapor temp
   for (int i=20;i<=38;i++)
   {
